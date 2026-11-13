@@ -7,7 +7,9 @@ const enginePort = process.env.DVA_ENGINE_PORT || "8765";
 export default defineConfig({
   plugins: [react()],
   base: "./",
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 2000 },
+  // cssMinify off: Vite's CSS minifier (lightningcss) needs a native add-on that npm sometimes fails to install
+  // on Windows; the stylesheet is ~25 KB, so minifying it gains nothing in a desktop app.
+  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 2000, cssMinify: false },
   server: {
     port: 5173,
     strictPort: true,

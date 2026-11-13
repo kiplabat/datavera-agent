@@ -118,21 +118,34 @@ class Runtime:
             raise RuntimeError_(f"No {backend} build is published for this operating system")
         self.installing[backend] = {"state": "starting"}
         try:
-            rel = await fetch_json(f"https://api.github.com/repos/{VERSIONS['llama_cpp_repo']}/releases/tags/{self.tag}")
-            assets = rel.get("assets", [])
+            api = f"https://api.github.com/repos/{VERSIONS['llama_cpp_repo']}/releases"
 
-            def pick(pats, exclude=None):
-                for a in assets:
-                    name = a["name"]
-                    if all(p in name for p in pats) and (name.endswith(".zip") or name.endswith(".tar.gz")) \
-                            and not (exclude and name.startswith(exclude)):
-                        return a
-                return None
-            wanted = [pick(patterns[backend], exclude="cudart")]
-            if backend == "cuda" and "cuda_runtime" in patterns:
-                wanted.append(pick(patterns["cuda_runtime"]))
-            if not all(wanted):
-                raise RuntimeError_(f"llama.cpp {self.tag} has no {backend} download for this computer")
+            def choose(assets):
+                def pick(pats, exclude=None):
+                    for a in assets:
+                        name = a["name"]
+                        if all(p in name for p in pats) and (name.endswith(".zip") or name.endswith(".tar.gz")) \
+                                and not (exclude and name.startswith(exclude)):
+                            return a
+                    return None
+                found = [pick(patterns[backend], exclude="cudart")]
+                if backend == "cuda" and "cuda_runtime" in patterns:
+                    found.append(pick(patterns["cuda_runtime"]))
+                return found if all(found) else None
+            try:
+                wanted = choose((await fetch_json(f"{api}/tags/{self.tag}")).get("assets", []))
+            except Exception:
+                wanted = None
+            if not wanted:
+                # Some llama.cpp releases are published without binaries; use the newest one that has them.
+                for rel in await fetch_json(f"{api}?per_page=30"):
+                    wanted = choose(rel.get("assets", []))
+                    if wanted:
+                        self.bus.publish("runtime", action="install_note", backend=backend,
+                                         note=f"llama.cpp {self.tag} has no {backend} build; using {rel.get('tag_name')}")
+                        break
+            if not wanted:
+                raise RuntimeError_(f"No recent llama.cpp release has a {backend} download for this computer")
             target = self.backend_dir(backend)
             tmp = target.with_name(target.name + ".tmp")
             shutil.rmtree(tmp, ignore_errors=True)

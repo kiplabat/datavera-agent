@@ -1,6 +1,9 @@
 """Models: a short recommended list, search across Hugging Face GGUF repositories, downloads (resumable, checked),
-importing a GGUF already on disk, per-model settings (CPU/GPU, context, threads) and "will it fit" estimates."""
+importing a GGUF already on disk, finding models other apps already downloaded (Ollama, LM Studio, Hugging Face
+cache, GPT4All, Jan), per-model settings (CPU/GPU, context, threads) and "will it fit" estimates."""
 import asyncio
+import json
+import os
 import re
 import shutil
 import time
@@ -49,6 +52,12 @@ CATALOG = [
 QUANT_RE = re.compile(r"(?i)(?:^|[-_.])((?:UD-)?(?:IQ\d_[A-Z0-9_]+|Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32|MXFP4(?:_MOE)?))"
                       r"(?:[-_.]|$)")
 SPLIT_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
+# llama.cpp `general.file_type` → the usual quantisation label (files from Ollama have no label in their name)
+FILE_TYPES = {0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 7: "Q8_0", 8: "Q5_0", 9: "Q5_1", 10: "Q2_K", 11: "Q3_K_S",
+              12: "Q3_K_M", 13: "Q3_K_L", 14: "Q4_K_S", 15: "Q4_K_M", 16: "Q5_K_S", 17: "Q5_K_M", 18: "Q6_K",
+              19: "IQ2_XXS", 20: "IQ2_XS", 21: "Q2_K_S", 22: "IQ3_XS", 23: "IQ3_XXS", 24: "IQ1_S", 25: "IQ4_NL",
+              26: "IQ3_S", 27: "IQ3_M", 28: "IQ2_S", 29: "IQ2_M", 30: "IQ4_XS", 31: "IQ1_M", 32: "BF16", 38: "MXFP4"}
+MIN_MODEL_BYTES = 50 * 2**20   # smaller .gguf files are vocabularies, adapters or test files
 
 
 def slug(text):
@@ -121,7 +130,10 @@ class Models:
             raise ValueError(f"That file is not a usable GGUF model ({exc})") from exc
         files = files or [str(path)]
         size = sum(Path(f).stat().st_size for f in files if Path(f).exists())
-        model_id = slug(catalog_key or (Path(path).name.replace(".gguf", "")))
+        for row in self.db.all("SELECT * FROM models"):
+            if row["path"] and Path(row["path"]) == path:
+                return row  # already added
+        model_id = slug(catalog_key or name or (Path(path).name.replace(".gguf", "")))
         base, n = model_id, 2
         while self.db.get("models", model_id):
             existing = self.db.get("models", model_id)
@@ -131,7 +143,9 @@ class Models:
         thinking = meta.get("template_supports_thinking")
         self.db.insert("models", {
             "id": model_id, "name": name or meta.get("name") or path.stem, "repo": repo or "", "files": files,
-            "path": str(path), "size": size, "sha256": sha256 or "", "quant": quant_of(path.name), "meta": meta,
+            "path": str(path), "size": size, "sha256": sha256 or "",
+            "quant": quant_of(path.name) if quant_of(path.name) != "?" else FILE_TYPES.get(meta.get("file_type"), "?"),
+            "meta": meta,
             "settings": {"compute": "auto", "thinking_supported": bool(thinking)}, "added": now()})
         self.bus.publish("models_changed")
         if not self.db.setting("default_model"):
@@ -273,11 +287,124 @@ class Models:
         elif dl_id in self.downloads:
             self.downloads.pop(dl_id)
 
-    def import_file(self, path):
+    def import_file(self, path, name=None):
         path = Path(path)
-        if not path.exists() or path.suffix.lower() != ".gguf":
+        if not path.exists() or not path.is_file():
+            raise ValueError("That file does not exist")
+        if path.suffix.lower() != ".gguf" and not path.name.startswith("sha256-"):  # Ollama blobs have no extension
             raise ValueError("Choose a .gguf model file")
-        return self.register(path)
+        return self.register(path, name=name)
+
+    # ------------------------------------------------------------------ models other apps already downloaded
+    def scan_folders(self):
+        """Where other local-AI apps keep GGUF models on this computer, plus folders the user added."""
+        home, env = Path.home(), os.environ
+        hf_home = Path(env.get("HF_HOME") or home / ".cache" / "huggingface")
+        local = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        roaming = Path(env.get("APPDATA") or home / "AppData" / "Roaming")
+        folders = [
+            ("Ollama", Path(env.get("OLLAMA_MODELS") or home / ".ollama" / "models")),
+            ("LM Studio", home / ".lmstudio" / "models"),
+            ("LM Studio", home / ".cache" / "lm-studio" / "models"),
+            ("Hugging Face cache", Path(env.get("HF_HUB_CACHE") or hf_home / "hub")),
+            ("GPT4All", local / "nomic.ai" / "GPT4All"),
+            ("Jan", home / "jan" / "models"),
+            ("Jan", roaming / "Jan" / "data" / "models"),
+            ("Models folder", self.paths.models_dir(self._settings())),
+        ]
+        for extra in self.db.setting("model_scan_folders") or []:
+            folders.append(("Your folder", Path(extra)))
+        seen, out = set(), []
+        for source, folder in folders:
+            key = str(folder).lower()
+            if key not in seen:
+                seen.add(key)
+                out.append((source, folder))
+        return out
+
+    def _ollama(self, root):
+        """Ollama keeps each model as a manifest (name:tag) pointing at a GGUF blob in blobs/."""
+        found = []
+        manifests = root / "manifests"
+        if not manifests.exists():
+            return found
+        for mf in manifests.rglob("*"):
+            if not mf.is_file():
+                continue
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            layer = next((l for l in data.get("layers", []) if l.get("mediaType") == "application/vnd.ollama.image.model"), None)
+            if not layer or ":" not in str(layer.get("digest", "")):
+                continue
+            blob = root / "blobs" / layer["digest"].replace(":", "-")
+            if not blob.exists():
+                continue
+            parts = mf.relative_to(manifests).parts            # host / namespace / model / tag
+            model, tag = parts[-2], parts[-1]
+            namespace = parts[-3] if len(parts) >= 3 else "library"
+            name = f"{model}:{tag}" if namespace == "library" else f"{namespace}/{model}:{tag}"
+            found.append({"path": blob, "name": name})
+        return found
+
+    def _gguf_files(self, root, limit=400):
+        found = []
+        try:
+            for dirpath, dirs, files in os.walk(root, followlinks=True):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for f in files:
+                    if not f.lower().endswith(".gguf") or "mmproj" in f.lower():
+                        continue
+                    m = SPLIT_RE.search(f)
+                    if m and m.group(1) != "00001":
+                        continue  # only the first part of a split model
+                    p = Path(dirpath) / f
+                    name = p.stem
+                    hf = re.search(r"models--([^\\/]+?)--([^\\/]+)", str(p))
+                    if hf:
+                        name = f"{hf.group(1)}/{hf.group(2)} · {p.stem}"
+                    found.append({"path": p, "name": name})
+                    if len(found) >= limit:
+                        return found
+        except OSError:
+            pass
+        return found
+
+    def scan_local(self):
+        from .hardware import snapshot
+        hw = snapshot()
+        known = {str(Path(r["path"])).lower(): r["id"] for r in self.db.all("SELECT id, path FROM models") if r["path"]}
+        results, scanned = [], []
+        for source, folder in self.scan_folders():
+            if not folder.exists():
+                continue
+            scanned.append({"source": source, "folder": str(folder)})
+            items = self._ollama(folder) if source == "Ollama" else self._gguf_files(folder)
+            for item in items:
+                p = item["path"]
+                try:
+                    real = p.resolve()
+                    size = real.stat().st_size
+                except OSError:
+                    continue
+                if size < MIN_MODEL_BYTES:
+                    continue
+                try:
+                    meta = gguf.read_metadata(real)
+                except Exception:
+                    continue  # not a GGUF llama.cpp can read
+                quant = quant_of(p.name)
+                results.append({
+                    "path": str(p), "name": item["name"], "source": source, "size": size,
+                    "architecture": meta.get("architecture"), "quant": quant if quant != "?" else FILE_TYPES.get(meta.get("file_type"), "?"),
+                    "added_as": known.get(str(p).lower()) or known.get(str(real).lower()),
+                    "fit": self.fit(size, meta, None, hw)})
+        uniq = {}
+        for r in results:  # the same file can be reachable twice (e.g. a symlinked cache)
+            uniq.setdefault(str(Path(r["path"]).resolve()).lower(), r)
+        return {"found": sorted(uniq.values(), key=lambda r: (r["added_as"] is not None, r["source"], r["name"])),
+                "scanned": scanned}
 
     # ------------------------------------------------------------------ benchmark
     async def benchmark(self, model_id, llm):

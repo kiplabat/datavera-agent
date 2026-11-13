@@ -102,10 +102,26 @@ async function llama() {
   const key = platform === "win" ? "windows" : (platform === "darwin" ? "darwin" : "linux");
   const backend = key === "darwin" ? "metal" : "cpu";
   const pats = versions.backend_assets[key][backend];
-  const rel = await (await fetch(`https://api.github.com/repos/${versions.llama_cpp_repo}/releases/tags/${versions.llama_cpp_tag}`,
-    { headers: { "User-Agent": "datavera-agent-build", Accept: "application/vnd.github+json" } })).json();
-  const asset = (rel.assets || []).find((a) => pats.every((p) => a.name.includes(p)) && a.name.endsWith(".zip") && !a.name.startsWith("cudart"));
-  if (!asset) throw new Error(`No ${backend} asset in llama.cpp ${versions.llama_cpp_tag} matching ${pats.join(" + ")}`);
+  const api = `https://api.github.com/repos/${versions.llama_cpp_repo}/releases`;
+  const headers = { "User-Agent": "datavera-agent-build", Accept: "application/vnd.github+json",
+    ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) };
+  const get = async (url) => {
+    const r = await fetch(url, { headers });
+    const body = await r.json();
+    if (!r.ok) throw new Error(`GitHub API ${r.status} for ${url}: ${body.message || ""}`);
+    return body;
+  };
+  const match = (rel) => (rel.assets || []).find((a) => pats.every((p) => a.name.includes(p)) && a.name.endsWith(".zip") && !a.name.startsWith("cudart"));
+  const pinned = await get(`${api}/tags/${versions.llama_cpp_tag}`).catch((e) => { console.warn(`   ${e.message}`); return { assets: [] }; });
+  let asset = match(pinned);
+  if (!asset) {
+    console.warn(`   llama.cpp ${versions.llama_cpp_tag} has no file matching ${pats.join(" + ")} (it lists: ${(pinned.assets || []).map((a) => a.name).join(", ") || "nothing"}).`);
+    for (const rel of await get(`${api}?per_page=30`)) {
+      asset = match(rel);
+      if (asset) { console.warn(`   using the newest release that has it: ${rel.tag_name}. Consider setting llama_cpp_tag to ${rel.tag_name} in engine/dva/versions.json.`); break; }
+    }
+  }
+  if (!asset) throw new Error(`No recent llama.cpp release has a file matching ${pats.join(" + ")}`);
   const zip = await download(asset.browser_download_url, path.join(cache, asset.name));
   const dest = path.join(out, "llama", backend);
   fs.rmSync(dest, { recursive: true, force: true });

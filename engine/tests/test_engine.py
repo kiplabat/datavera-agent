@@ -52,7 +52,7 @@ def engine():
     port = free_port()
     token = "test-token"
     env = {**os.environ, "DVA_TOKEN": token, "DVA_LLAMA_SERVER": str(wrapper), "DVA_SECRETS": "file",
-           "PYTHONPATH": str(ENGINE)}
+           "PYTHONPATH": str(ENGINE), "OLLAMA_MODELS": str(tmp / "ollama"), "HF_HOME": str(tmp / "hf")}
     log = tmp / "engine-output.log"
     proc = subprocess.Popen([sys.executable, "-m", "dva", "serve", "--port", str(port), "--data-dir", str(tmp / "data")],
                             cwd=str(ENGINE), env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, text=True)
@@ -329,3 +329,35 @@ def test_datavera_pipeline_without_key(engine):
     msg = last_assistant(c, chat["id"])
     assert done["status"] == "done", done
     assert "Set up the Datavera plugin first" in json.dumps(msg["meta"]["steps"])
+
+
+def test_finds_models_from_other_apps(engine):
+    c, tmp = engine["client"], engine["tmp"]
+    # an Ollama-style store: manifest name:tag -> blob without extension
+    blob = tmp / "ollama" / "blobs" / ("sha256-" + "a" * 64)
+    blob.parent.mkdir(parents=True)
+    tiny_gguf(blob, name="Qwen3.5 4B")
+    os.truncate(blob, 60 * 2**20)
+    mf = tmp / "ollama" / "manifests" / "registry.ollama.ai" / "library" / "qwen3.5" / "4b"
+    mf.parent.mkdir(parents=True)
+    mf.write_text(json.dumps({"layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:" + "a" * 64}]}))
+    # a folder the user added (LM Studio style), with a split model and a tiny vocab file that must be ignored
+    lm = tmp / "lmstudio" / "lmstudio-community" / "gemma"
+    lm.mkdir(parents=True)
+    for name in ("gemma-3-4b-it-Q4_K_M.gguf", "big-Q8_0-00001-of-00002.gguf", "big-Q8_0-00002-of-00002.gguf", "vocab.gguf"):
+        tiny_gguf(lm / name, name=name)
+        if name != "vocab.gguf":
+            os.truncate(lm / name, 60 * 2**20)
+    c.put("/api/settings", json={"model_scan_folders": [str(tmp / "lmstudio")]})
+    found = c.get("/api/models/local").json()["found"]
+    names = {f["name"]: f for f in found}
+    assert "qwen3.5:4b" in names and names["qwen3.5:4b"]["source"] == "Ollama"
+    assert "gemma-3-4b-it-Q4_K_M" in names and "big-Q8_0-00001-of-00002" in names
+    assert not any(n.startswith("big-Q8_0-00002") or "vocab" in n for n in names)
+    m = c.post("/api/models/import", json={"path": names["qwen3.5:4b"]["path"], "name": "qwen3.5:4b"}).json()
+    assert m["id"] == "qwen3.5-4b" and m["path"].endswith("a" * 64)
+    again = c.post("/api/models/import", json={"path": names["qwen3.5:4b"]["path"], "name": "qwen3.5:4b"}).json()
+    assert again["id"] == m["id"]  # no duplicates
+    assert next(f for f in c.get("/api/models/local").json()["found"] if f["name"] == "qwen3.5:4b")["added_as"] == m["id"]
+    c.delete(f"/api/models/{m['id']}")
+    assert blob.exists()  # removing it from the app never deletes another app's file

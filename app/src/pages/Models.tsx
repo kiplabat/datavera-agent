@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Cpu, Download, Gauge, HardDrive, MemoryStick, Play, Search, Star, Trash2, X, Zap } from "lucide-react";
 import { api, desktop, enc, fmtBytes } from "../api";
 import { go, useApp, useEvent } from "../store";
-import { Badge, Button, ConfirmButton, Field, PageHeader, Progress, Spinner, Tabs, fitBadge } from "../components/ui";
+import { Badge, Button, ConfirmButton, Field, FolderInput, PageHeader, Progress, Spinner, Tabs, fitBadge } from "../components/ui";
 
 const CTX = [2048, 4096, 8192, 16384, 32768, 65536];
 
@@ -104,11 +104,59 @@ function Installed() {
           </div>
         );
       })}
+      <LocalModels onAdded={load} />
       <div className="card">
         <h3>Add a model file you already have</h3>
-        <p className="muted small">Any GGUF file (from LM Studio, Ollama exports, Hugging Face…). It stays where it is.</p>
+        <p className="muted small">Any GGUF file (from LM Studio, Ollama, Hugging Face…). It stays where it is.</p>
         <ImportFile onDone={load} />
       </div>
+    </div>
+  );
+}
+
+// Models other local-AI apps already downloaded (Ollama, LM Studio, Hugging Face cache, GPT4All, Jan, your folders).
+export function LocalModels({ onAdded, compact }: any) {
+  const { toast, boot, refreshBoot } = useApp();
+  const [data, setData] = useState<any>(null);
+  const [busy, setBusy] = useState("");
+  const [folder, setFolder] = useState("");
+  const scan = () => { setData(null); api.get("/models/local").then(setData).catch((e) => toast(e.message, "error")); };
+  useEffect(() => { scan(); }, []);
+  const add = async (f: any) => {
+    setBusy(f.path);
+    try { await api.post("/models/import", { path: f.path, name: f.name }); toast(`Added ${f.name}`, "ok"); await refreshBoot(); onAdded?.(); scan(); }
+    catch (e: any) { toast(e.message, "error"); }
+    setBusy("");
+  };
+  const fresh = (data?.found || []).filter((f: any) => !f.added_as);
+  if (compact && data && !fresh.length) return null;
+  return (
+    <div className="card">
+      <div className="row between"><h3>Already on this computer</h3>
+        <button className="link" onClick={scan}>Scan again</button></div>
+      {!data ? <div className="row gap-s muted small"><Spinner size={13} /> Looking for models from Ollama, LM Studio, Hugging Face, GPT4All and Jan…</div> : (
+        <>
+          <p className="muted small">{fresh.length ? `Found ${fresh.length} model${fresh.length > 1 ? "s" : ""} you can use without downloading. ` : "No other models found. "}
+            They are used where they are (nothing is copied), and removing one here never deletes the other app's file.</p>
+          {fresh.map((f: any) => (
+            <div key={f.path} className="list-row" title={f.path}>
+              <span className="ellipsis"><b>{f.name}</b> <span className="muted small">{f.source} · {f.quant} · {fmtBytes(f.size)}{f.architecture ? ` · ${f.architecture}` : ""}</span></span>
+              <span className="row gap-s">{fitBadge(f.fit)}<Button small kind="primary" busy={busy === f.path} onClick={() => add(f)}>Use</Button></span>
+            </div>
+          ))}
+          {fresh.length > 1 && <div className="mt"><Button small onClick={async () => { for (const f of fresh) await add(f); }}>Use all {fresh.length}</Button></div>}
+          {fresh.some((f: any) => f.source === "Ollama") && <p className="muted small">Most Ollama models load fine in llama.cpp; a few Ollama-only formats may not — the app will say so when loading.</p>}
+          {!compact && (
+            <Field label="Also look in a folder" help={`Searched: ${data.scanned.map((s: any) => s.folder).join(" · ") || "—"}`}>
+              <div className="row gap-s"><FolderInput value={folder} onChange={setFolder} />
+                <Button disabled={!folder} onClick={async () => {
+                  await api.put("/settings", { model_scan_folders: [...(boot.settings.model_scan_folders || []), folder] });
+                  setFolder(""); await refreshBoot(); scan();
+                }}>Add folder</Button></div>
+            </Field>
+          )}
+        </>
+      )}
     </div>
   );
 }

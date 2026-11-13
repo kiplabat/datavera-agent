@@ -3,6 +3,7 @@ import { Check, Cpu, Download, Plug, Sparkles } from "lucide-react";
 import { api } from "../api";
 import { go, useApp } from "../store";
 import { Button, Progress, Spinner, fitBadge } from "../components/ui";
+import { LocalModels } from "./Models";
 
 export default function Onboarding() {
   const { downloads, refreshBoot, toast } = useApp();
@@ -28,7 +29,9 @@ export default function Onboarding() {
         <div className="card step-card">
           <div className="step-num"><Download size={18} /></div>
           <div className="grow">
-            <h3>2. Download a model</h3>
+            <h3>2. Choose a model</h3>
+            <LocalModels compact onAdded={() => toast("Model ready", "ok")} />
+            <p className="small muted mt">Or download the recommended one:</p>
             {!pick ? <Spinner /> : (
               <>
                 <p><b>{pick.name}</b> {fitBadge(pick.fit)} — {pick.about} About {pick.approx_gb} GB.</p>
@@ -53,7 +56,7 @@ export default function Onboarding() {
           </div>
         </div>
       </div>
-      <div className="center mt"><Button kind="primary" icon={<Sparkles size={15} />} onClick={finish}>{dl?.state === "done" ? "Start" : "Continue (the download keeps going)"}</Button></div>
+      <div className="center mt"><Button kind="primary" icon={<Sparkles size={15} />} onClick={finish}>{dl && dl.state !== "done" ? "Continue (the download keeps going)" : "Start"}</Button></div>
     </div>
   );
 }

@@ -32,13 +32,25 @@ function resources() {
   return isDev ? path.join(__dirname, "..", "resources") : process.resourcesPath;
 }
 
+// Which Python runs the engine: DVA_PYTHON, then the installer's own embedded Python, then engine\.venv
+// (development), then a Python 3.12 already installed on this computer that has the engine's packages.
 function pythonPath() {
   if (process.env.DVA_PYTHON) return process.env.DVA_PYTHON;
   const bundled = path.join(resources(), "python", process.platform === "win32" ? "python.exe" : "bin/python3");
   if (fs.existsSync(bundled)) return bundled;
   const venv = path.join(__dirname, "..", "..", "engine", ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
   if (fs.existsSync(venv)) return venv;
-  return process.platform === "win32" ? "python" : "python3";
+  const { execFileSync } = require("child_process");
+  const tries = process.platform === "win32" ? [["py", ["-3.12"]], ["python", []]] : [["python3.12", []], ["python3", []]];
+  const check = "import sys, fastapi, uvicorn, fastmcp; assert sys.version_info[:2] == (3, 12); print(sys.executable)";
+  for (const [cmd, pre] of tries) {
+    try {
+      const exe = execFileSync(cmd, [...pre, "-c", check], { windowsHide: true, timeout: 20000 }).toString().trim();
+      if (exe) { log(`using installed Python: ${exe}`); return exe; }
+    } catch {}
+  }
+  throw new Error("No Python found for the engine. Install the app with its installer, or for development run:\n" +
+    "cd engine\npy -3.12 -m venv .venv\n.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt");
 }
 
 function engineDir() {
@@ -75,8 +87,10 @@ function startEngine() {
     };
     const port = process.env.DVA_ENGINE_PORT || "0";
     const args = ["-m", "dva", "serve", "--port", port, "--data-dir", userData, "--resources", resources()];
-    log(`starting engine: ${pythonPath()} ${args.join(" ")}`);
-    engine = spawn(pythonPath(), args, { cwd: engineDir(), env, windowsHide: true });
+    let python;
+    try { python = pythonPath(); } catch (err) { reject(err); return; }
+    log(`starting engine: ${python} ${args.join(" ")}`);
+    engine = spawn(python, args, { cwd: engineDir(), env, windowsHide: true });
     const out = fs.createWriteStream(path.join(logsDir, "engine-console.log"), { flags: "a" });
     let ready = false;
     const timer = setTimeout(() => { if (!ready) reject(new Error("The engine did not start within 90 seconds")); }, 90000);

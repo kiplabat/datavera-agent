@@ -12,6 +12,8 @@
     "build:ui": "vite build",
     "prepare:resources": "node scripts/prepare-resources.mjs",
     "dist:win": "npm run build:ui && node scripts/prepare-resources.mjs --platform win && electron-builder --win --x64",
+    "pack:win": "electron-builder --win nsis --x64",
+    "pack:win:zip": "electron-builder --win zip --x64",
     "dist:dir": "npm run build:ui && node scripts/prepare-resources.mjs && electron-builder --dir"
   },
   "dependencies": {

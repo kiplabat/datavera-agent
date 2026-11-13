@@ -201,7 +201,12 @@ def create_app(data_dir=None, resources_dir=None, token=None):
 
     @api.post("/api/models/import")
     async def models_import(request: Request):
-        return await asyncio.to_thread(A().models.import_file, (await body(request))["path"])
+        data = await body(request)
+        return await asyncio.to_thread(A().models.import_file, data["path"], data.get("name"))
+
+    @api.get("/api/models/local")
+    async def models_local():
+        return await asyncio.to_thread(A().models.scan_local)
 
     @api.put("/api/models/{model_id}")
     async def models_update(model_id: str, request: Request):
