@@ -713,7 +713,7 @@ async def stage_submit(run, pub):
 async def execute(run, stop_after):
     p, cfg = run.progress, run.config
     run.inventory = ResearchInventory(ROOT)  # stops on a missing/corrupt baseline or event history
-    rules = (ROOT / "INVENTORY_RULES.md").read_bytes()
+    rules = (connection.CODE / "INVENTORY_RULES.md").read_bytes()
     s = run.inventory.summary()
     p.event("catalogue", f"{s['total']} local records ({s['personal']} personal; companies {s['by_company']}); "
                          f"rules sha256 {hashlib.sha256(rules).hexdigest()[:12]}; no remote paging")
@@ -729,10 +729,10 @@ async def execute(run, stop_after):
         try:
             present, names, loaded = await model.available()
         except Exception as exc:
-            raise StageFailed(f"Ollama is not reachable at {model.base_url} ({type(exc).__name__}). "
-                              "Start the Ollama app (CPU server on 11434) and retry.") from exc
+            raise StageFailed(f"The {model.backend} model server is not reachable at {model.base_url} "
+                              f"({type(exc).__name__}). {model.start_hint}") from exc
         if not present:
-            raise StageFailed(f"Ollama model {model.model!r} not found at {model.base_url}; available: {names}")
+            raise StageFailed(f"{model.backend} model {model.model!r} not found at {model.base_url}; available: {names}")
         p.event("model", f"{model.model} available; loaded now: {[m.get('name') for m in loaded] or 'none (first call loads it)'}")
     async with contextlib.AsyncExitStack() as stack:
         browser = pub = None

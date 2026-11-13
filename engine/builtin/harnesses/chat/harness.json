@@ -1,0 +1,11 @@
+{
+  "name": "Chat",
+  "description": "Plain conversation with memory. The fastest choice: no tools, one model call per reply.",
+  "type": "loop",
+  "mode": "chat",
+  "tools": [],
+  "temperature": 0.6,
+  "memory": true,
+  "learn": true,
+  "icon": "chat"
+}

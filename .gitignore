@@ -8,3 +8,12 @@ backup_*/
 retired_*/
 __pycache__/
 *.pyc
+# desktop app (build outputs and downloads)
+app/node_modules/
+app/dist/
+app/resources/
+app/release/
+app/.cache/
+engine/.venv/
+engine/builtin/plugins/datavera/pipeline/
+.pytest_cache/

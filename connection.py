@@ -6,7 +6,10 @@ from urllib.parse import urlsplit
 from dotenv import load_dotenv
 from fastmcp import Client
 
-ROOT = Path(__file__).resolve().parent
+CODE = Path(__file__).resolve().parent
+# Where settings, the catalogue and run outputs live. The desktop app sets DATAVERA_AGENT_HOME to its own data
+# folder; the command-line install keeps everything beside the code, as before.
+ROOT = Path(os.environ.get("DATAVERA_AGENT_HOME") or CODE).resolve()
 load_dotenv(ROOT / ".env")
 
 

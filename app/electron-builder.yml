@@ -1,0 +1,43 @@
+appId: io.datavera.agent
+productName: Datavera Agent
+copyright: Copyright © 2026 Datavera
+directories:
+  output: release
+  buildResources: build
+files:
+  - electron/**
+  - build/icon.*
+  - package.json
+asarUnpack:
+  - node_modules/@playwright/**
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+extraResources:
+  - from: dist
+    to: ui
+  - from: resources/engine
+    to: engine
+  - from: resources/python
+    to: python
+  - from: resources/llama
+    to: llama
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  artifactName: DataveraAgent-Setup-${version}.${ext}
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Datavera Agent
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+mac:
+  target: dmg
+  category: public.app-category.productivity
+  icon: build/icon.png
