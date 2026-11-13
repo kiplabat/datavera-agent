@@ -1,0 +1,13 @@
+{
+  "name": "Researcher",
+  "description": "Searches the web, reads sources and answers with citations. Can save notes to your folders.",
+  "type": "loop",
+  "mode": "agent",
+  "tools": ["web", "files", "memory", "skills"],
+  "connectors": true,
+  "max_steps": 14,
+  "temperature": 0.2,
+  "memory": true,
+  "learn": true,
+  "icon": "search"
+}

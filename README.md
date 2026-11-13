@@ -1,5 +1,10 @@
 # Datavera local agent
 
+> **New (beta): the Datavera Agent desktop app.** A window instead of the command line: chats, projects, memory,
+> skills, plugins, scheduled tasks, and models you download and run on your own computer (CPU or GPU).
+> This dataset publisher is built in as the Datavera plugin. Developers: see [app/README.md](app/README.md) and
+> [engine/README.md](engine/README.md). The steps below are for the command-line version, which keeps working.
+
 A helper that runs **on your own computer**. Each time you start it, it:
 
 1. picks a subject (for example "glacier mass balance"),

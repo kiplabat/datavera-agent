@@ -1,0 +1,40 @@
+{
+  "id": "datavera",
+  "name": "Datavera",
+  "version": "2.0.0",
+  "description": "Publish real public datasets to your Datavera account, check analytics and reply to comments. Includes the dataset-publisher pipeline (search → download → analyse → charts → publish), the Datavera account connector and skills.",
+  "author": "Datavera",
+  "homepage": "https://www.datavera.io/publish/agent",
+  "default_enabled": true,
+  "settings": [
+    {"key": "api_key", "label": "Datavera API key", "type": "secret", "required": true,
+     "help": "On datavera.io open Account → API Keys, tick Read and Publish, press Generate key, then Copy key. It starts with dv_sk_ (personal) or dv_co_ (company). Making a new key switches the old one off."},
+    {"key": "owner", "label": "Publish as", "type": "select", "options": [],
+     "help": "You personally, or one of your companies. Press 'Check and connect' to load your choices."},
+    {"key": "topics", "label": "Subjects to look for", "type": "textarea",
+     "help": "Comma-separated, e.g. 'glacier mass balance, solar capacity by country'. Empty = a ready-made mixed list. Narrow subjects work better than broad ones."},
+    {"key": "auto_submit", "label": "Submit automatically for review", "type": "boolean", "default": true,
+     "help": "On: finished datasets go to Datavera's review queue. Off: they stay as drafts for you to check first. Runs with warnings always stay as drafts."},
+    {"key": "import_from", "label": "Import from the command-line agent (optional)", "type": "folder",
+     "help": "If you used the earlier command-line agent, choose its folder (e.g. C:\\DataveraAgent) to bring over its catalogue and history so nothing is repeated."}
+  ],
+  "connectors": [
+    {"id": "account", "name": "Datavera", "transport": "http", "url": "https://api.datavera.io/v1/mcp/account",
+     "auth": {"type": "bearer", "setting": "api_key"}, "approval": "changes",
+     "description": "Your Datavera account: datasets, uploads, publishing, analytics and comments."}
+  ],
+  "setup": "setup_hook.py",
+  "actions": [
+    {"id": "sync", "label": "Sync my catalogue", "run": "pipeline_entry.py", "args": ["sync"],
+     "help": "Refresh the local list of your datasets (prevents duplicates). Read-only."},
+    {"id": "stats", "label": "Catalogue summary", "run": "pipeline_entry.py", "args": ["stats"]},
+    {"id": "status", "label": "Recent pipeline runs", "run": "pipeline_entry.py", "args": ["status"]}
+  ],
+  "schedule_templates": [
+    {"name": "Publish one dataset every day", "when": "every day at 10:00", "harness": "datavera:dataset-publisher",
+     "prompt": "Find and publish one new dataset.", "only_on_ac": true, "max_runs_per_day": 1, "auto_approve": true},
+    {"name": "Weekly Datavera analytics summary", "when": "every monday at 09:00", "harness": "agent",
+     "prompt": "Using the Datavera connector, summarise my datasets' views, likes and new comments over the last week. List comments that need a reply.",
+     "connectors": ["datavera:account"]}
+  ]
+}

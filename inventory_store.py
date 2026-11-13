@@ -18,7 +18,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-DEFAULT_ROOT = Path(__file__).resolve().parent
+DEFAULT_ROOT = Path(os.environ.get("DATAVERA_AGENT_HOME") or Path(__file__).resolve().parent)
 
 
 def now():

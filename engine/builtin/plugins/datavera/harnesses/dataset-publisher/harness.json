@@ -1,0 +1,21 @@
+{
+  "name": "Datavera dataset publisher",
+  "description": "Pipeline: finds a public dataset it may reuse, downloads it, computes the analysis and charts, and publishes it to Datavera. Say a subject, paste a source page URL, or just say 'run'.",
+  "type": "pipeline",
+  "entry": "../../pipeline_entry.py",
+  "args": ["run"],
+  "args_map": {"topic": "--topic", "source_url": "--source-url", "stop_after": "--stop-after"},
+  "inputs": {
+    "type": "object",
+    "properties": {
+      "topic": {"type": "string", "maxLength": 120, "description": "Subject to search for"},
+      "source_url": {"type": "string", "maxLength": 500, "description": "A source page to inspect directly"},
+      "stop_after": {"enum": ["", "validate", "draft", "submit"], "description": "Where to stop"}
+    }
+  },
+  "input_prompt": "The user is asking a dataset-publishing robot to run. Extract: topic = the subject they want data about (a few words, empty if none); source_url = a web page URL they gave (empty if none); stop_after = 'draft' if they want to check it before it is submitted, 'validate' if they only want a test without creating anything, otherwise empty.",
+  "needs": ["browser", "model"],
+  "timeout_minutes": 60,
+  "learn": true,
+  "icon": "publish"
+}

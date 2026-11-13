@@ -1,0 +1,39 @@
+{
+  "name": "datavera-agent",
+  "productName": "Datavera Agent",
+  "version": "2.0.0",
+  "description": "Local AI agents on your own computer: chat, projects, memory, skills, plugins, harnesses and scheduled tasks. Models run on your machine.",
+  "author": "Datavera <hello@datavera.io>",
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build:ui": "vite build",
+    "prepare:resources": "node scripts/prepare-resources.mjs",
+    "dist:win": "npm run build:ui && node scripts/prepare-resources.mjs --platform win && electron-builder --win --x64",
+    "pack:win": "electron-builder --win nsis --x64",
+    "pack:win:zip": "electron-builder --win zip --x64",
+    "dist:dir": "npm run build:ui && node scripts/prepare-resources.mjs && electron-builder --dir"
+  },
+  "dependencies": {
+    "@playwright/mcp": "0.0.85"
+  },
+  "devDependencies": {
+    "@fontsource/dm-sans": "5.3.0",
+    "@fontsource/fraunces": "5.3.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0",
+    "extract-zip": "2.0.1",
+    "lucide-react": "1.72.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.8"
+  }
+}

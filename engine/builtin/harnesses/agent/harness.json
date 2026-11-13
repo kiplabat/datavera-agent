@@ -1,0 +1,13 @@
+{
+  "name": "Agent",
+  "description": "Works step by step with tools: your folders, the web, Python, skills, connectors and schedules.",
+  "type": "loop",
+  "mode": "agent",
+  "tools": ["files", "web", "python", "memory", "skills", "automation"],
+  "connectors": true,
+  "max_steps": 12,
+  "temperature": 0.3,
+  "memory": true,
+  "learn": true,
+  "icon": "agent"
+}

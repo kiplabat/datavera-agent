@@ -1,0 +1,21 @@
+{
+  "llama_cpp_tag": "b12207",
+  "llama_cpp_repo": "ggml-org/llama.cpp",
+  "playwright_mcp": "0.0.85",
+  "python_embed": "3.12.10",
+  "backend_assets": {
+    "windows": {
+      "cpu": ["bin-win-cpu-x64"],
+      "vulkan": ["bin-win-vulkan-x64"],
+      "cuda": ["bin-win-cuda-12", "-x64"],
+      "cuda_runtime": ["cudart-llama-bin-win-cuda-12", "-x64"]
+    },
+    "linux": {
+      "cpu": ["bin-ubuntu-x64"],
+      "vulkan": ["bin-ubuntu-vulkan-x64"]
+    },
+    "darwin": {
+      "metal": ["bin-macos-arm64"]
+    }
+  }
+}
