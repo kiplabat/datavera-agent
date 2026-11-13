@@ -3,11 +3,19 @@
   "description": "Opens your data files (CSV, Excel, JSON), cleans and analyses them with Python, makes charts and writes up findings.",
   "type": "loop",
   "mode": "agent",
-  "tools": ["files", "python", "web", "memory", "skills"],
+  "tools": [
+    "files",
+    "python",
+    "web",
+    "memory",
+    "skills",
+    "vision"
+  ],
   "connectors": true,
   "max_steps": 14,
   "temperature": 0.2,
   "memory": true,
   "learn": true,
-  "icon": "chart"
+  "icon": "chart",
+  "max_searches": 3
 }

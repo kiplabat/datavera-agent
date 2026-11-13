@@ -1,0 +1,19 @@
+{
+  "name": "Vision analyst",
+  "description": "Looks at images and videos (photos, screenshots, charts, scans, clips) and describes, reads or compares them. Needs a vision model (eye icon).",
+  "type": "loop",
+  "mode": "agent",
+  "tools": [
+    "files",
+    "vision",
+    "python",
+    "memory"
+  ],
+  "connectors": false,
+  "max_steps": 10,
+  "max_reply_tokens": 3072,
+  "temperature": 0.2,
+  "memory": true,
+  "learn": false,
+  "icon": "eye"
+}

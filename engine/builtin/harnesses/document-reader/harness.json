@@ -1,0 +1,20 @@
+{
+  "name": "Document reader",
+  "description": "Reads long PDFs, Word, PowerPoint and Excel files in your folders and answers questions with page references, summaries or extracted tables.",
+  "type": "loop",
+  "mode": "agent",
+  "tools": [
+    "files",
+    "python",
+    "memory",
+    "skills",
+    "vision"
+  ],
+  "connectors": false,
+  "max_steps": 14,
+  "max_reply_tokens": 3072,
+  "temperature": 0.2,
+  "memory": true,
+  "learn": true,
+  "icon": "file"
+}

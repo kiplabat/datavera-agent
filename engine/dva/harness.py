@@ -1,7 +1,9 @@
 """Harnesses: how the agent works on a request.
 
 type "loop"      the model works in a loop with tools. mode = chat (no tools) | agent (tools, step limit) |
-                 planner (writes a short plan, then does each step, then reports).
+                 planner (writes a short plan, then does each step, then reports) | research (fixed research
+                 stages run by the app: search, read, download, notes, cited report) | team (a lead splits the work
+                 between agents that run in parallel, then combines their results).
 type "pipeline"  a fixed sequence of steps written in Python (like the Datavera dataset publisher). The model is
                  asked only bounded questions inside it; the engine runs it as a task and streams its progress.
 
@@ -24,7 +26,7 @@ SCHEMA = {
         "name": {"type": "string", "minLength": 2, "maxLength": 60},
         "description": {"type": "string", "maxLength": 400},
         "type": {"enum": ["loop", "pipeline"]},
-        "mode": {"enum": ["chat", "agent", "planner"]},
+        "mode": {"enum": ["chat", "agent", "planner", "research", "team"]},
         "tools": {"type": "array", "items": {"type": "string"}},
         "connectors": {"type": "boolean"},
         "max_steps": {"type": "integer", "minimum": 1, "maximum": 60},
@@ -37,6 +39,14 @@ SCHEMA = {
         "memory": {"type": "boolean"},
         "learn": {"type": "boolean"},
         "max_native_tools": {"type": "integer", "minimum": 1, "maximum": 128},
+        "max_reply_tokens": {"type": "integer", "minimum": 64, "maximum": 32768},
+        "max_tool_calls": {"type": "integer", "minimum": 1, "maximum": 200},
+        "max_searches": {"type": "integer", "minimum": 1, "maximum": 30},
+        "time_limit_minutes": {"type": "number", "minimum": 1, "maximum": 1440},
+        "tool_limits": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "queries": {"type": "integer", "minimum": 1, "maximum": 8},
+        "pages": {"type": "integer", "minimum": 1, "maximum": 15},
+        "max_downloads": {"type": "integer", "minimum": 0, "maximum": 20},
         "entry": {"type": "string"},
         "args": {"type": "array", "items": {"type": "string"}},
         "args_map": {"type": "object", "additionalProperties": {"type": "string"}},

@@ -11,8 +11,16 @@ class LLMError(RuntimeError):
 
 
 class LLM:
+    """Calls go to the model server leased by the current task (see Runtime.lease), so several agents can use
+    different models at the same time. Pass server= to choose one explicitly."""
     def __init__(self, runtime):
         self.runtime = runtime
+
+    def _server(self, server):
+        server = server or self.runtime.active()
+        if server is None:
+            raise LLMError("No model is loaded")
+        return server.base_url, server.headers
 
     def _body(self, messages, *, tools=None, schema=None, max_tokens=1024, temperature=0.4, thinking=False,
               stream=False, tool_choice=None, stop=None):
@@ -32,13 +40,13 @@ class LLM:
         return body
 
     async def complete(self, messages, *, schema=None, tools=None, max_tokens=1024, temperature=0.2,
-                       thinking=False, timeout=900):
+                       thinking=False, timeout=900, server=None):
         """One non-streamed call. With a schema, returns the parsed object in result['json'] (or raises)."""
         body = self._body(messages, tools=tools, schema=schema, max_tokens=max_tokens, temperature=temperature,
                           thinking=thinking)
+        base, headers = self._server(server)
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as http:
-            r = await http.post(self.runtime.base_url + "/v1/chat/completions", json=body,
-                                headers=self.runtime.headers)
+            r = await http.post(base + "/v1/chat/completions", json=body, headers=headers)
         if r.status_code != 200:
             raise LLMError(f"model server HTTP {r.status_code}: {r.text[:300]}")
         data = r.json()
@@ -57,27 +65,27 @@ class LLM:
             out["json"] = value
         return out
 
-    async def json(self, messages, schema, *, max_tokens=512, retries=1, temperature=0.1):
+    async def json(self, messages, schema, *, max_tokens=512, retries=1, temperature=0.1, server=None):
         last = None
         for _ in range(retries + 1):
             try:
                 return (await self.complete(messages, schema=schema, max_tokens=max_tokens,
-                                            temperature=temperature))["json"]
+                                            temperature=temperature, server=server))["json"]
             except LLMError as exc:
                 last = exc
         raise last
 
     async def stream(self, messages, *, tools=None, max_tokens=2048, temperature=0.4, thinking=False, timeout=1800,
-                     tool_choice=None):
+                     tool_choice=None, server=None):
         """Yields ('reasoning', text), ('token', text), then ('end', {...tool_calls, timings, finish_reason})."""
         body = self._body(messages, tools=tools, max_tokens=max_tokens, temperature=temperature, thinking=thinking,
                           stream=True, tool_choice=tool_choice)
+        base, headers = self._server(server)
         calls = {}
         timings, usage, finish = {}, {}, None
         content = []
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), trust_env=False) as http:
-            async with http.stream("POST", self.runtime.base_url + "/v1/chat/completions", json=body,
-                                   headers=self.runtime.headers) as r:
+            async with http.stream("POST", base + "/v1/chat/completions", json=body, headers=headers) as r:
                 if r.status_code != 200:
                     text = (await r.aread()).decode("utf-8", errors="replace")
                     raise LLMError(f"model server HTTP {r.status_code}: {text[:300]}")

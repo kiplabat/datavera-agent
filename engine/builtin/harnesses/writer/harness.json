@@ -1,0 +1,18 @@
+{
+  "name": "Writer",
+  "description": "Drafts and edits documents, emails, reports and posts in your voice; can read your files and save drafts.",
+  "type": "loop",
+  "mode": "agent",
+  "tools": [
+    "files",
+    "memory",
+    "skills"
+  ],
+  "connectors": true,
+  "max_steps": 8,
+  "max_reply_tokens": 4096,
+  "temperature": 0.7,
+  "memory": true,
+  "learn": true,
+  "icon": "pen"
+}

@@ -3,7 +3,15 @@
   "description": "For longer jobs: writes a short plan, works through each step with tools, then reports. Good for background tasks.",
   "type": "loop",
   "mode": "planner",
-  "tools": ["files", "web", "python", "memory", "skills", "automation"],
+  "tools": [
+    "files",
+    "web",
+    "python",
+    "memory",
+    "skills",
+    "automation",
+    "vision"
+  ],
   "connectors": true,
   "max_steps": 20,
   "plan_max_steps": 5,

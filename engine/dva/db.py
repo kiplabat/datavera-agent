@@ -50,11 +50,20 @@ CREATE TABLE IF NOT EXISTS plugin_state (
   updated TEXT);
 CREATE TABLE IF NOT EXISTS item_state (
   kind TEXT, id TEXT, enabled INTEGER DEFAULT 1, PRIMARY KEY (kind, id));
+CREATE TABLE IF NOT EXISTS downloads (
+  id TEXT PRIMARY KEY, spec_json TEXT DEFAULT '{}', state TEXT, error TEXT, created TEXT, updated TEXT);
 """
+
+# Columns added after the first release: (table, column, definition). Applied once, on start.
+MIGRATIONS = [
+    ("chats", "settings_json", "TEXT DEFAULT '{}'"),        # per-chat limits (reply length, steps, time…)
+    ("chats", "parent_chat_id", "TEXT"),                   # agents started by another chat (teams)
+    ("chats", "agent_name", "TEXT"),
+]
 
 
 def now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")  # ms: keeps message order exact
 
 
 def new_id(prefix=""):
@@ -71,6 +80,10 @@ class DB:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.executescript(SCHEMA)
+            for table, column, definition in MIGRATIONS:
+                have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if column not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _row(row):

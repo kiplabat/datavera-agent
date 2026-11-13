@@ -130,7 +130,7 @@ class Memory:
             await asyncio.sleep(delay)
             # wait for the model to be free (chats and tasks first), up to 20 minutes
             for _ in range(240):
-                if self.app.runtime.users == 0 and not self.app.jobs.busy_with_model():
+                if not self.app.jobs.busy_with_model():
                     break
                 await asyncio.sleep(5)
             await self.learn(chat_id)

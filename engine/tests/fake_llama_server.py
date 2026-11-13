@@ -55,12 +55,30 @@ def minimal(schema):
     return None
 
 
+def text_of(content):
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if p.get("type") == "text") + \
+            f" [{sum(p.get('type') == 'image_url' for p in content)} images]"
+    return content or ""
+
+
 def decide(body):
     msgs = body["messages"]
     tools = {t["function"]["name"] for t in body.get("tools") or []}
     last_user = next((m for m in reversed(msgs) if m["role"] == "user"), {"content": ""})
     after_tool = msgs and msgs[-1]["role"] == "tool"
-    text = last_user.get("content") or ""
+    text = text_of(last_user.get("content"))
+    users = " ".join(text_of(m.get("content")) for m in msgs if m["role"] == "user")
+    if "images]" in text and "[0 images]" not in text:
+        return {"text": "I can see " + text.split("[")[-1].rstrip("]")}
+    if tools and "keep looping" in users and "list_files" in tools:   # a model stuck in a loop
+        return {"tool": ("list_files", {"path": "."})}
+    if "slow" in users and not tools:
+        return {"text": " ".join(["word"] * 25), "delay": 0.12}
+    if "slowly" in text and tools and not after_tool and "list_files" in tools:
+        return {"tool": ("list_files", {"path": "."}), "delay": 1.5}
+    if "Message from me while you were working" in text:
+        return {"text": "Noted your new message: " + text.split(":)")[-1].strip()[:60]}
     if tools and not after_tool:
         if "list files" in text and "list_files" in tools:
             return {"tool": ("list_files", {"path": "."})}
@@ -105,6 +123,8 @@ async def chat(request: Request):
         return {"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
                 "timings": TIMINGS}
     d = decide(body)
+    if d.get("delay") and "tool" in d:
+        time.sleep(d["delay"])
     if not body.get("stream"):
         msg = {"role": "assistant", "content": d.get("text", "")}
         if "tool" in d:
@@ -125,7 +145,7 @@ async def chat(request: Request):
         else:
             for word in d["text"].split(" "):
                 yield chunk({"content": word + " "})
-                time.sleep(0.005)
+                time.sleep(d.get("delay") or 0.005)
             yield chunk({}, "stop")
         yield "data: " + json.dumps({"choices": [], "timings": TIMINGS, "usage": {}}) + "\n\n"
         yield "data: [DONE]\n\n"

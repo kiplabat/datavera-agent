@@ -21,18 +21,18 @@ class Jobs:
                                                "error": "The app was closed while this was running"})
 
     def create(self, kind, title, coro_factory, chat_id=None, schedule_id=None, harness=None, model=None,
-               payload=None, notify=False):
+               payload=None, notify=False, on_done=None):
         job_id = new_id("job_")
         row = {"id": job_id, "kind": kind, "title": title[:200], "status": "queued", "chat_id": chat_id,
                "schedule_id": schedule_id, "harness": harness, "model": model, "payload": payload or {},
                "created": now()}
         self.db.insert("jobs", row)
         row = self.db.get("jobs", job_id)
-        self.tasks[job_id] = asyncio.create_task(self._run(row, coro_factory, notify))
+        self.tasks[job_id] = asyncio.create_task(self._run(row, coro_factory, notify, on_done))
         self.app.bus.publish("job", id=job_id, status="queued", title=row["title"], job_kind=kind, chat_id=chat_id)
         return row
 
-    async def _run(self, row, coro_factory, notify):
+    async def _run(self, row, coro_factory, notify, on_done=None):
         job_id = row["id"]
         self.set_status(job_id, "running", started=now())
         status, error, result = "done", None, {}
@@ -53,6 +53,11 @@ class Jobs:
         if notify:
             self.app.bus.publish("notify", title=("Task finished: " if status == "done" else "Task " + status + ": ")
                                  + row["title"], body=(error or "Open it to see the result."), chat_id=row["chat_id"])
+        if on_done:
+            try:
+                on_done(status)
+            except Exception as exc:
+                self.app.log(f"after job {job_id}: {type(exc).__name__}: {exc}")
 
     def set_status(self, job_id, status, **extra):
         self.db.update("jobs", job_id, {"status": status, **extra})
@@ -93,7 +98,7 @@ class Jobs:
                      if (self.db.get("jobs", jid) or {}).get("chat_id") == chat_id), None)
 
     def busy_with_model(self):
-        return any((self.db.get("jobs", jid) or {}).get("kind") in ("chat", "schedule") for jid in self.tasks)
+        return any((self.db.get("jobs", jid) or {}).get("kind") in ("chat", "schedule", "agent") for jid in self.tasks)
 
     def list(self, limit=100, status=None):
         sql = "SELECT * FROM jobs"

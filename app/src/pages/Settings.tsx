@@ -42,7 +42,17 @@ export default function Settings() {
           <Field label="Free memory after (minutes idle)">
             <input className="input narrow" type="number" min={0} value={s.unload_after_minutes} onChange={(e) => set({ unload_after_minutes: Number(e.target.value) })} />
           </Field>
+          <Field label="Models loaded at once" help="More lets agents use different models in parallel; each needs memory.">
+            <input className="input narrow" type="number" min={1} max={6} value={s.max_loaded_models ?? 3} onChange={(e) => set({ max_loaded_models: Number(e.target.value) })} />
+          </Field>
+          <Field label="Agents at once (teams)">
+            <input className="input narrow" type="number" min={1} max={8} value={s.max_parallel_agents ?? 4} onChange={(e) => set({ max_parallel_agents: Number(e.target.value) })} />
+          </Field>
+          <Field label="Time limit per reply (minutes)" help="Agents stop and report what they found.">
+            <input className="input narrow" type="number" min={1} value={s.turn_time_limit_minutes ?? 30} onChange={(e) => set({ turn_time_limit_minutes: Number(e.target.value) })} />
+          </Field>
         </div>
+        <Toggle checked={s.browser_search ?? true} onChange={(v: boolean) => set({ browser_search: v })} label="When search engines return nothing useful, search again in a real browser window (Edge)" />
         <Field label="Hugging Face token (optional)" help="Only for models that require you to accept a licence on huggingface.co. Stored in Windows Credential Manager.">
           <div className="row gap-s"><input className="input" type="password" value={hf} placeholder={boot.has_hf_token ? "saved ••••" : "hf_…"} onChange={(e) => setHf(e.target.value)} />
             <Button onClick={async () => { await set({ hf_token: hf }); setHf(""); toast("Saved", "ok"); }}>Save</Button></div>

@@ -295,7 +295,8 @@ def test_real_llama_server():
         assert msg["meta"]["stats"]["output_tokens"] > 0
         bench = c.post(f"/api/models/{m['id']}/benchmark").json()
         assert bench["reply_seconds"] > 0 and "json_valid" in bench
-        assert c.post("/api/runtime/unload").json()["ok"]
+        r = c.post("/api/runtime/unload").json()
+        assert r.get("ok"), r
     finally:
         c.post("/api/shutdown")
         proc.wait(10)
@@ -361,3 +362,174 @@ def test_finds_models_from_other_apps(engine):
     assert next(f for f in c.get("/api/models/local").json()["found"] if f["name"] == "qwen3.5:4b")["added_as"] == m["id"]
     c.delete(f"/api/models/{m['id']}")
     assert blob.exists()  # removing it from the app never deletes another app's file
+
+
+# ---------------------------------------------------------------------- loop guard, follow-ups, teams, vision, web
+def chat_messages(c, chat_id):
+    return c.get(f"/api/chats/{chat_id}").json()["messages"]
+
+
+def test_loop_guard_stops_a_looping_agent(engine):
+    c, tmp = engine["client"], engine["tmp"]
+    chat = c.post("/api/chats", json={"harness": "agent", "folders": [str(tmp / "project-files")]}).json()
+    job = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "keep looping please"}).json()
+    assert wait_job(c, job["job_id"])["status"] == "done"
+    msg = last_assistant(c, chat["id"])
+    tools = [s for s in msg["meta"]["steps"] if s["type"] == "tool"]
+    assert tools[0]["ok"] and all(s.get("blocked") for s in tools[1:]) and len(tools) <= 8
+    assert "repeating" in msg["meta"]["guard"] or "nothing new" in msg["meta"]["guard"]
+    assert any(s["type"] == "note" and "Stopped using tools" in s["text"] for s in msg["meta"]["steps"])
+
+
+def test_queued_follow_up_runs_after_the_reply(engine):
+    c = engine["client"]
+    chat = c.post("/api/chats", json={"harness": "chat"}).json()
+    first = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "a slow reply please"}).json()
+    time.sleep(0.6)
+    queued = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "and a second thing", "mode": "queue"}).json()
+    assert queued["state"] == "queue"
+    assert wait_job(c, first["job_id"])["status"] == "done"
+    for _ in range(100):
+        msgs = chat_messages(c, chat["id"])
+        if len([m for m in msgs if m["role"] == "assistant"]) == 2 and not c.get(f"/api/chats/{chat['id']}").json()["running_job"]:
+            break
+        time.sleep(0.2)
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    assert msgs[2]["content"] == "and a second thing" and not msgs[2]["meta"].get("pending")
+
+
+def test_steer_reaches_the_running_agent(engine):
+    c, tmp = engine["client"], engine["tmp"]
+    chat = c.post("/api/chats", json={"harness": "agent", "folders": [str(tmp / "project-files")]}).json()
+    job = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "list files slowly"}).json()
+    time.sleep(0.5)
+    r = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "only count the csv files", "mode": "steer"}).json()
+    assert r["state"] == "steer"
+    assert wait_job(c, job["job_id"])["status"] == "done"
+    msg = last_assistant(c, chat["id"])
+    assert any(s["type"] == "steer" for s in msg["meta"]["steps"])
+    assert "only count the csv files" in msg["content"]
+    time.sleep(0.5)
+    assert len([m for m in chat_messages(c, chat["id"]) if m["role"] == "assistant"]) == 1  # not run twice
+
+
+def test_stop_keeps_queued_messages_unsent(engine):
+    c = engine["client"]
+    chat = c.post("/api/chats", json={"harness": "chat"}).json()
+    first = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "slow again"}).json()
+    time.sleep(0.4)
+    q = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "queued then stopped"}).json()
+    c.post(f"/api/chats/{chat['id']}/stop")
+    assert wait_job(c, first["job_id"])["status"] == "cancelled"
+    time.sleep(0.5)
+    row = next(m for m in chat_messages(c, chat["id"]) if m["id"] == q["message_id"])
+    assert row["meta"].get("not_sent")
+    again = c.post(f"/api/chats/{chat['id']}/messages/{q['message_id']}/resend").json()
+    assert again["state"] == "started" and wait_job(c, again["job_id"])["status"] == "done"
+
+
+def test_team_runs_agents_in_parallel(engine):
+    c = engine["client"]
+    chat = c.post("/api/chats", json={"harness": "chat"}).json()
+    team = [{"name": "Alpha", "harness": "chat", "task": "say hello"},
+            {"name": "Beta", "harness": "chat", "task": "say goodbye", "limits": {"max_reply_tokens": 300}}]
+    job = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "greet in two ways", "team": team}).json()
+    assert wait_job(c, job["job_id"], timeout=90)["status"] == "done"
+    full = c.get(f"/api/chats/{chat['id']}").json()
+    assert {a["agent_name"] for a in full["agents"]} == {"Alpha", "Beta"}
+    msg = last_assistant(c, chat["id"])
+    team_step = next(s for s in msg["meta"]["steps"] if s["type"] == "team")
+    assert all(a["status"] == "done" and a["content"] for a in team_step["agents"])
+    beta = next(a for a in full["agents"] if a["agent_name"] == "Beta")
+    assert c.get(f"/api/chats/{beta['id']}").json()["settings"]["max_reply_tokens"] == 300
+    listed = {r["id"] for r in c.get("/api/chats").json()["chats"]}
+    assert beta["id"] not in listed            # agents' chats stay out of the sidebar
+
+
+def test_per_chat_limits_and_harnesses(engine):
+    c = engine["client"]
+    ids = {h["id"] for h in c.get("/api/harnesses").json()["harnesses"]}
+    assert {"coder", "writer", "document-reader", "vision-analyst", "team-lead", "researcher"} <= ids
+    chat = c.post("/api/chats", json={"harness": "chat"}).json()
+    upd = c.put(f"/api/chats/{chat['id']}", json={"settings": {"max_reply_tokens": "512", "max_steps": 0,
+                                                               "temperature": "0.1", "junk": 5}}).json()
+    assert upd["settings"] == {"max_reply_tokens": 512, "temperature": 0.1}
+
+
+def test_research_without_internet_says_so(engine):
+    c = engine["client"]
+    c.put("/api/settings", json={"browser_search": False})
+    chat = c.post("/api/chats", json={"harness": "researcher"}).json()
+    job = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "electricity statistics for Kenya"}).json()
+    assert wait_job(c, job["job_id"], timeout=120)["status"] == "done"
+    msg = last_assistant(c, chat["id"])
+    kinds = [s.get("name") for s in msg["meta"]["steps"] if s["type"] == "tool"]
+    assert kinds and set(kinds) <= {"web_search", "web_fetch", "extract", "download_file"}
+    assert any(s["type"] == "note" and "No relevant sources" in s["text"] for s in msg["meta"]["steps"])
+
+
+def test_vision_attachment_reaches_vision_model(engine):
+    c, tmp = engine["client"], engine["tmp"]
+    from PIL import Image
+    tiny_gguf(tmp / "eye-model-Q4_K_M.gguf", name="eye-model")
+    tiny_gguf(tmp / "mmproj-eye-F16.gguf", arch="clip", name="eye-proj")
+    m = c.post("/api/models/import", json={"path": str(tmp / "eye-model-Q4_K_M.gguf")}).json()
+    assert m["settings"].get("mmproj", "").endswith("mmproj-eye-F16.gguf")   # found next to the model
+    chat = c.post("/api/chats", json={"harness": "chat", "model": m["id"]}).json()
+    img = tmp / "pic.png"
+    Image.new("RGB", (40, 30), (200, 50, 50)).save(img)
+    att = {"name": "pic.png", "path": str(img), "size": img.stat().st_size}
+    job = c.post(f"/api/chats/{chat['id']}/messages", json={"text": "what is this?", "attachments": [att]}).json()
+    assert wait_job(c, job["job_id"])["status"] == "done"
+    assert "1 images" in last_assistant(c, chat["id"])["content"]
+    log = (tmp / "data" / "logs" / "llama-server.log").read_text()
+    assert "--mmproj" in log
+
+
+def test_web_parsing_and_relevance_offline():
+    sys.path.insert(0, str(ENGINE))
+    import base64
+    from dva.tools import web
+    real = "https://www.epra.go.ke/statistics/energy-2024.pdf"
+    ck = "https://www.bing.com/ck/a?!&&p=abc&u=a1" + base64.urlsafe_b64encode(real.encode()).decode().rstrip("=")
+    assert web.unwrap(ck) == real
+    assert web.unwrap("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fa", "https://html.duckduckgo.com/html/") == "https://example.org/a"
+    bing = f"""<ol><li class="b_algo"><h2><a href="{ck}">Kenya energy statistics 2024 (EPRA)</a></h2>
+      <div class="b_caption"><p>Electricity generation and capacity in Kenya</p></div></li>
+      <li class="b_algo"><h2><a href="https://outlook.live.com/">Outlook – free personal email</a></h2>
+      <p>Sign in to Outlook</p></li></ol>"""
+    rows = web.parse_bing(bing, "https://www.bing.com/search?q=x")
+    terms = web.terms_of("Kenya electricity generation statistics 2024")
+    kept = [r for r in rows if web.score(r, terms) > 0]
+    assert [r["url"] for r in kept] == [real]
+    ddg = """<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fkplc.co.ke%2Felectricity-kenya">
+      Electricity in Kenya – KPLC</a><a class="result__snippet">Kenya generation mix</a></div>"""
+    assert web.parse_ddg(ddg, "https://html.duckduckgo.com/html/")[0]["url"] == "https://kplc.co.ke/electricity-kenya"
+    title, text, files = web.html_to_text('<html><title>T</title><body><main><h2>Data</h2><p>Table</p>'
+                                          '<a href="/files/data.csv">CSV</a></main></body></html>', "https://x.org/p")
+    assert "## Data" in text and files[0]["url"] == "https://x.org/files/data.csv"
+
+
+def test_loop_guard_rules():
+    sys.path.insert(0, str(ENGINE))
+    from dva.runner import LoopGuard
+
+    class DB:
+        def setting(self, k, d=None):
+            return d
+
+    class T:
+        limits, harness, db = {"max_searches": 3}, {}, DB()
+    g = LoopGuard(T())
+    assert g.check("web_search", {"query": "kenya electricity generation 2024"}) is None
+    g.record("web_search", {"query": "kenya electricity generation 2024"}, True, "results A")
+    assert "nearly the same" in g.check("web_search", {"query": "electricity generation kenya 2024 data"})
+    assert "already called" in g.check("web_search", {"query": "kenya electricity generation 2024"})
+    for q in ("solar farms", "wind power turbines"):
+        g.record("web_search", {"query": q}, True, "NO RELEVANT RESULTS")
+    assert "limit" in g.check("web_search", {"query": "geothermal output olkaria"})
+    g.record("read_file", {"path": "a"}, False, "Error: x")
+    assert g.nudge() and g.should_stop() is None
+    for i in range(3):
+        g.record("read_file", {"path": str(i)}, False, "Error: x")
+    assert "nothing new" in g.should_stop()

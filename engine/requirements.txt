@@ -16,3 +16,7 @@ matplotlib==3.11.2
 openpyxl==3.1.5
 filelock==4.2.10
 python-dotenv==1.2.4
+# reading PDFs (web pages and files), images and video frames for vision models
+pypdf==7.1.0
+pillow==13.0.0
+av==19.0.2

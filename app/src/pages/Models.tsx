@@ -1,27 +1,45 @@
 import React, { useEffect, useState } from "react";
-import { Cpu, Download, Gauge, HardDrive, MemoryStick, Play, Search, Star, Trash2, X, Zap } from "lucide-react";
+import { Cpu, Download, Eye, Gauge, HardDrive, MemoryStick, Play, RotateCcw, Search, Star, Trash2, X, Zap } from "lucide-react";
 import { api, desktop, enc, fmtBytes } from "../api";
 import { go, useApp, useEvent } from "../store";
-import { Badge, Button, ConfirmButton, Field, FolderInput, PageHeader, Progress, Spinner, Tabs, fitBadge } from "../components/ui";
+import { Badge, Button, ConfirmButton, Field, FolderInput, PageHeader, Progress, Spinner, Tabs, Toggle, fitBadge } from "../components/ui";
 
 const CTX = [2048, 4096, 8192, 16384, 32768, 65536];
 
+function fmtEta(s?: number | null) {
+  if (!s) return "";
+  if (s < 90) return `${s} s left`;
+  if (s < 5400) return `${Math.round(s / 60)} min left`;
+  return `${(s / 3600).toFixed(1)} h left`;
+}
+
+const DL_ACTIVE = ["queued", "connecting", "downloading", "retrying", "verifying"];
+
 function DownloadsBar() {
-  const { downloads } = useApp();
-  const active = Object.values(downloads).filter((d: any) => ["queued", "downloading", "verifying"].includes(d.state));
-  if (!active.length) return null;
+  const { downloads, toast } = useApp();
+  const shown = Object.values(downloads).filter((d: any) => [...DL_ACTIVE, "paused", "failed"].includes(d.state));
+  if (!shown.length) return null;
+  const act = async (fn: () => Promise<any>) => { try { await fn(); } catch (e: any) { toast(e.message, "error"); } };
   return (
     <div className="card">
-      <h3>Downloading</h3>
-      {active.map((d: any) => (
-        <div key={d.id} className="download-row">
-          <div className="row between"><b>{d.name}</b>
-            <span className="muted small">{fmtBytes(d.done)} / {fmtBytes(d.total)} {d.rate ? `· ${fmtBytes(d.rate)}/s` : ""} {d.state === "verifying" ? "· checking…" : ""}</span></div>
-          <div className="row gap-s"><Progress value={d.done} total={d.total} />
-            <button className="icon-btn" title="Cancel" onClick={() => api.del(`/downloads/${d.id}`)}><X size={14} /></button></div>
-        </div>
-      ))}
-      <p className="muted small">Downloads continue if you close the window. An interrupted download resumes where it stopped.</p>
+      <h3>Downloads</h3>
+      {shown.map((d: any) => {
+        const active = DL_ACTIVE.includes(d.state);
+        const pct = d.total ? Math.floor((d.done / d.total) * 100) : 0;
+        return (
+          <div key={d.id} className="download-row">
+            <div className="row between wrap"><b>{d.name}{d.vision ? <> <Eye size={13} className="accent" /></> : null}</b>
+              <span className="muted small">{fmtBytes(d.done)} / {fmtBytes(d.total)} · {pct}%{d.rate ? ` · ${fmtBytes(d.rate)}/s` : ""}{d.eta ? ` · ${fmtEta(d.eta)}` : ""}</span></div>
+            <div className="row gap-s"><Progress value={d.done} total={d.total} />
+              {(d.state === "failed" || d.state === "paused") && <Button small icon={<RotateCcw size={13} />} onClick={() => act(() => api.post(`/downloads/${d.id}/resume`))}>{d.state === "paused" ? "Resume" : "Try again"}</Button>}
+              <button className="icon-btn" title={active ? "Cancel" : "Remove"} onClick={() => act(() => api.del(`/downloads/${d.id}`))}><X size={14} /></button></div>
+            {active && <div className="dl-phase">{d.state === "queued" ? "Waiting to start…" : d.state === "verifying" ? "Checking the file…" : d.phase || (d.state === "connecting" ? "Connecting…" : "Downloading…")}
+              {d.state === "downloading" && !d.rate && d.done === 0 ? " — waiting for the first data…" : ""}</div>}
+            {!active && d.error && <div className="dl-error">{d.error}</div>}
+          </div>
+        );
+      })}
+      <p className="muted small">Downloads continue if you close the window, retry by themselves when the connection drops, and resume where they stopped after a restart.</p>
     </div>
   );
 }
@@ -39,11 +57,18 @@ function Installed() {
   return (
     <div className="stack">
       <DownloadsBar />
-      {modelStatus.state !== "idle" && (
-        <div className="card row between">
-          <div><b>Loaded now:</b> {modelStatus.model_id || "—"} <span className="muted">· {modelStatus.state}{modelStatus.backend ? ` · ${modelStatus.backend}` : ""}{modelStatus.ctx ? ` · context ${modelStatus.ctx}` : ""}</span>
-            {modelStatus.error && <div className="error-line">{modelStatus.error}</div>}</div>
-          {modelStatus.state === "ready" && <Button small onClick={async () => { try { await api.post("/runtime/unload"); } catch (e: any) { toast(e.message, "error"); } }}>Unload (free memory)</Button>}
+      {(data.loaded?.length > 0 || modelStatus.state === "loading" || modelStatus.state === "failed") && (
+        <div className="card">
+          <h3>Loaded now</h3>
+          {modelStatus.state === "loading" && <div className="row gap-s small"><Spinner size={13} /> Loading {modelStatus.model_id}…</div>}
+          {modelStatus.state === "failed" && <div className="error-line">{modelStatus.error}</div>}
+          {(data.loaded || []).map((l: any) => (
+            <div key={l.model_id} className="loaded-row">
+              <div><b>{l.model_id}</b> {l.vision && <Eye size={13} className="accent" />} <span className="muted small">· {l.compute?.toUpperCase()} ({l.backend}) · context {l.ctx?.toLocaleString()}{l.parallel > 1 ? ` · ${l.parallel} replies at once` : ""} · about {(l.memory_mb / 1024).toFixed(1)} GB{l.users ? ` · in use (${l.users})` : ""}</span></div>
+              <Button small disabled={l.users > 0} onClick={async () => { try { await api.post("/runtime/unload", { model_id: l.model_id }); load(); } catch (e: any) { toast(e.message, "error"); } }}>Unload</Button>
+            </div>
+          ))}
+          <p className="muted small">Several models can be loaded at once (up to {boot.settings.max_loaded_models || 3}, if memory allows) so agents can work in parallel. Idle models unload after {boot.settings.unload_after_minutes || 20} minutes.</p>
         </div>
       )}
       {data.models.length === 0 && (
@@ -56,7 +81,8 @@ function Installed() {
           <div key={m.id} className="card model-card">
             <div className="row between wrap">
               <div>
-                <h3>{m.name} {m.id === data.default && <Badge kind="accent"><Star size={11} /> default</Badge>}</h3>
+                <h3>{m.name} {m.id === data.default && <Badge kind="accent"><Star size={11} /> default</Badge>}
+                  {s.mmproj && s.vision !== false && <Badge kind="ok" title={s.mmproj}><Eye size={11} /> sees images</Badge>}</h3>
                 <div className="muted small">{m.repo || m.path} · {m.quant} · {fmtBytes(m.size)}{m.meta?.architecture ? ` · ${m.meta.architecture}` : ""}{m.meta?.context_length ? ` · trained for ${m.meta.context_length.toLocaleString()} tokens` : ""}</div>
                 {!m.exists && <div className="error-line">The model file is missing ({m.path}).</div>}
               </div>
@@ -86,6 +112,19 @@ function Installed() {
               <Field label="CPU threads">
                 <input className="input narrow" type="number" min={1} max={64} placeholder="auto" value={s.threads || ""}
                   onChange={(e) => set(m.id, { threads: e.target.value ? Number(e.target.value) : null })} />
+              </Field>
+              <Field label="Simultaneous replies" help="For agents in parallel; uses more memory.">
+                <select className="input narrow" value={s.parallel || 1} onChange={(e) => set(m.id, { parallel: Number(e.target.value) })}>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </Field>
+              <Field label="Vision (images & video)">
+                {s.mmproj ? <><Toggle checked={s.vision !== false} onChange={(v: boolean) => set(m.id, { vision: v })} label={s.vision !== false ? "On" : "Off"} />
+                  {s.vision === false && s.vision_error && <div className="field-help">Turned off: {s.vision_error}</div>}</>
+                  : <Button small icon={<Eye size={13} />} busy={busy === `vision-${m.id}`} onClick={async () => {
+                      setBusy(`vision-${m.id}`);
+                      try { const r = await api.post(`/models/${m.id}/vision`); toast(`Downloading the vision part from ${r.repo}`, "ok"); } catch (e: any) { toast(e.message, "error"); }
+                      setBusy(""); }}>Add vision</Button>}
               </Field>
             </div>
             {b.at && (
@@ -124,7 +163,7 @@ export function LocalModels({ onAdded, compact }: any) {
   useEffect(() => { scan(); }, []);
   const add = async (f: any) => {
     setBusy(f.path);
-    try { await api.post("/models/import", { path: f.path, name: f.name }); toast(`Added ${f.name}`, "ok"); await refreshBoot(); onAdded?.(); scan(); }
+    try { await api.post("/models/import", { path: f.path, name: f.name, mmproj: f.mmproj }); toast(`Added ${f.name}`, "ok"); await refreshBoot(); onAdded?.(); scan(); }
     catch (e: any) { toast(e.message, "error"); }
     setBusy("");
   };
@@ -140,7 +179,7 @@ export function LocalModels({ onAdded, compact }: any) {
             They are used where they are (nothing is copied), and removing one here never deletes the other app's file.</p>
           {fresh.map((f: any) => (
             <div key={f.path} className="list-row" title={f.path}>
-              <span className="ellipsis"><b>{f.name}</b> <span className="muted small">{f.source} · {f.quant} · {fmtBytes(f.size)}{f.architecture ? ` · ${f.architecture}` : ""}</span></span>
+              <span className="ellipsis"><b>{f.name}</b> {f.vision && <Eye size={12} className="accent" />} <span className="muted small">{f.source} · {f.quant} · {fmtBytes(f.size)}{f.architecture ? ` · ${f.architecture}` : ""}</span></span>
               <span className="row gap-s">{fitBadge(f.fit)}<Button small kind="primary" busy={busy === f.path} onClick={() => add(f)}>Use</Button></span>
             </div>
           ))}
@@ -174,6 +213,96 @@ function ImportFile({ onDone }: any) {
   );
 }
 
+const CATEGORIES = [
+  { id: "all", label: "All" }, { id: "chat", label: "Chat & agents" }, { id: "vision", label: "Sees images" },
+  { id: "coding", label: "Coding" }, { id: "small", label: "Small & fast" },
+];
+const SORTS = [
+  { id: "fit", label: "Best for this computer" }, { id: "downloads", label: "Most downloaded" },
+  { id: "trending", label: "Trending" }, { id: "recent", label: "Recently updated" },
+];
+
+function RepoFiles({ repo, onBack, hasGpu, onDownload }: any) {
+  const [vision, setVision] = useState(true);
+  return (
+    <div className="mt">
+      <div className="row between"><b>{repo.repo}</b><button className="link" onClick={onBack}>Back</button></div>
+      {repo.vision && (
+        <div className="row gap-s small mt"><Toggle checked={vision} onChange={setVision} />
+          <span><Eye size={13} className="accent" /> Also download the vision part ({fmtBytes(repo.mmproj_file?.size)}) so this model can look at images and videos</span></div>
+      )}
+      {repo.files.length === 0 && <p className="muted">This repository has no GGUF model files.</p>}
+      {repo.files.map((f: any) => (
+        <div key={f.file} className="list-row">
+          <span className="ellipsis">{f.file}{f.parts.length > 1 ? ` (${f.parts.length} parts)` : ""} {f.recommended && <Badge kind="accent" title="Best quality that runs comfortably on this computer">recommended</Badge>}</span>
+          <span className="row gap-s"><span className="muted small">{f.quant} · {fmtBytes(f.size)}</span>{fitBadge(f.fit, hasGpu ? "gpu" : "cpu")}
+            <Button small kind={f.recommended ? "primary" : "default"} icon={<Download size={13} />} onClick={() => onDownload({ repo: repo.repo, file: f.file, vision })}>Download</Button></span>
+        </div>
+      ))}
+      <p className="muted small">Q4_K_M is usually the best balance; bigger files (Q5, Q6, Q8) are a little better and slower, smaller ones (Q3, IQ2) are faster and noticeably worse.</p>
+    </div>
+  );
+}
+
+function Browse({ hasGpu, onOpen, busy }: any) {
+  const { toast } = useApp();
+  const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState("fit");
+  const [trusted, setTrusted] = useState(true);
+  const [fitsOnly, setFitsOnly] = useState(true);
+  const [data, setData] = useState<any>(null);
+  const [shown, setShown] = useState(25);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    setLoading(true); setShown(25);
+    api.get(`/models/browse?category=${category}&sort=${sort}&trusted=${trusted}`).then(setData)
+      .catch((e) => toast(`Could not reach Hugging Face: ${e.message}`, "error")).finally(() => setLoading(false));
+  }, [category, sort, trusted]);
+  const fits = (m: any) => m.fit.cpu !== "too_big" || (hasGpu && ["fits", "partial"].includes(m.fit.gpu));
+  const rows = (data?.models || []).filter((m: any) => !fitsOnly || fits(m));
+  return (
+    <div className="card">
+      <h3>Browse models for this computer</h3>
+      <p className="muted small">Popular models on Hugging Face, with an estimate of size, whether they fit this computer's memory and how quick they feel. Click one to choose a file.</p>
+      <div className="browse-filters">
+        <div className="seg">{CATEGORIES.map((c) => <button key={c.id} className={`seg-btn${category === c.id ? " on" : ""}`} onClick={() => setCategory(c.id)}>{c.label}</button>)}</div>
+        <select className="input narrow-auto" value={sort} onChange={(e) => setSort(e.target.value)}>{SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+        <Toggle checked={fitsOnly} onChange={setFitsOnly} label="Only what fits" />
+        <Toggle checked={trusted} onChange={setTrusted} label="Well-known publishers" />
+      </div>
+      {loading && <div className="row gap-s muted small mt"><Spinner size={13} /> Asking Hugging Face…</div>}
+      {!loading && data && (
+        <div className="browse-list">
+          {rows.length === 0 && <p className="muted">Nothing here fits this computer. Try another category, or turn off "Only what fits".</p>}
+          {rows.slice(0, shown).map((m: any) => (
+            <div key={m.repo} className={`browse-row${fits(m) ? "" : " dim"}`} onClick={() => onOpen(m.repo)}>
+              <div className="stack-xs" style={{ minWidth: 0 }}>
+                <div className="ellipsis"><b>{m.name}</b> <span className="muted small">by {m.publisher}</span></div>
+                <div className="browse-meta">
+                  <span>{m.params_b} B parameters{m.moe ? ` (${m.active_b} B active)` : ""}</span>
+                  <span>· about {fmtBytes(m.est_size)} at Q4</span>
+                  {m.context ? <span>· {Math.round(m.context / 1024)}K context</span> : null}
+                  <span>· {m.downloads.toLocaleString()} downloads</span>
+                  {m.vision && <Badge kind="accent"><Eye size={11} /> images</Badge>}
+                  {m.coder && <Badge>code</Badge>}
+                  {m.gated && <Badge kind="warn" title="Accept the licence on huggingface.co and add a token in Settings">needs access</Badge>}
+                </div>
+              </div>
+              <div className="row gap-s">
+                {m.installed ? <Badge kind="ok">installed</Badge> : null}
+                <Badge kind={m.speed === "fast" ? "ok" : m.speed === "ok" ? "neutral" : "warn"} title="Rough reply speed on this computer">{({ fast: "fast", ok: "medium speed", slow: "slow", "too big": "too big" } as any)[m.speed] || m.speed}</Badge>
+                {fitBadge(m.fit, hasGpu ? "gpu" : "cpu")}
+                {busy === m.repo && <Spinner size={13} />}
+              </div>
+            </div>
+          ))}
+          {rows.length > shown && <Button small onClick={() => setShown(shown + 25)}>Show more ({rows.length - shown})</Button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Discover() {
   const { toast } = useApp();
   const [catalog, setCatalog] = useState<any>(null);
@@ -191,7 +320,7 @@ function Discover() {
   };
   const openRepo = async (r: string) => {
     setBusy(r);
-    try { setRepo(await api.get(`/models/files?repo=${enc(r)}`)); } catch (e: any) { toast(e.message, "error"); }
+    try { setRepo(await api.get(`/models/files?repo=${enc(r)}`)); window.scrollTo({ top: 0 }); } catch (e: any) { toast(e.message, "error"); }
     setBusy("");
   };
   const dl = async (body: any) => {
@@ -200,8 +329,9 @@ function Discover() {
   return (
     <div className="stack">
       <DownloadsBar />
+      {repo && <div className="card"><RepoFiles repo={repo} hasGpu={hasGpu} onBack={() => setRepo(null)} onDownload={dl} /></div>}
       <div className="card">
-        <h3>Recommended for this computer</h3>
+        <h3>Recommended</h3>
         {!catalog ? <Spinner /> : (
           <>
             <p className="muted small">{catalog.hardware.cpu} · {(catalog.hardware.ram_mb / 1024).toFixed(0)} GB memory{catalog.hardware.gpus.map((g: any) => ` · ${g.name}${g.vram_mb ? ` (${(g.vram_mb / 1024).toFixed(0)} GB)` : ""}`).join("")}</p>
@@ -219,30 +349,19 @@ function Discover() {
           </>
         )}
       </div>
+      <Browse hasGpu={hasGpu} onOpen={openRepo} busy={busy} />
       <div className="card">
-        <h3>Search Hugging Face</h3>
-        <p className="muted small">Any GGUF model. Smaller "Q4_K_M" files are the usual best balance of size and quality.</p>
+        <h3>Search by name</h3>
+        <p className="muted small">If you know a model's name. Any GGUF repository on Hugging Face.</p>
         <div className="row gap-s"><input className="input" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="e.g. qwen3.5, gemma, llama, mistral" />
           <Button icon={<Search size={14} />} busy={busy === "search"} onClick={search}>Search</Button></div>
-        {results && !repo && (
+        {results && (
           <div className="mt">
             {results.length === 0 && <p className="muted">No GGUF models found.</p>}
             {results.map((r) => (
               <div key={r.repo} className="list-row" onClick={() => openRepo(r.repo)}>
                 <span className="ellipsis">{r.repo}</span>
                 <span className="muted small">{busy === r.repo ? <Spinner size={12} /> : `${(r.downloads || 0).toLocaleString()} downloads`}{r.gated ? " · needs access" : ""}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {repo && (
-          <div className="mt">
-            <div className="row between"><b>{repo.repo}</b><button className="link" onClick={() => setRepo(null)}>Back to results</button></div>
-            {repo.files.map((f: any) => (
-              <div key={f.file} className="list-row">
-                <span className="ellipsis">{f.file}{f.parts.length > 1 ? ` (${f.parts.length} parts)` : ""}</span>
-                <span className="row gap-s"><span className="muted small">{f.quant} · {fmtBytes(f.size)}</span>{fitBadge(f.fit, hasGpu ? "gpu" : "cpu")}
-                  <Button small icon={<Download size={13} />} onClick={() => dl({ repo: repo.repo, file: f.file })}>Download</Button></span>
               </div>
             ))}
           </div>

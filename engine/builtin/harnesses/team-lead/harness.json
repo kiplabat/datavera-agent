@@ -1,0 +1,12 @@
+{
+  "name": "Team lead",
+  "description": "Splits a big task between several agents that work at the same time (each with its own model and limits), then combines their results.",
+  "type": "loop",
+  "mode": "team",
+  "connectors": true,
+  "temperature": 0.3,
+  "memory": true,
+  "learn": true,
+  "max_reply_tokens": 4096,
+  "icon": "team"
+}

@@ -57,6 +57,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const onHash = () => setRoute(parseHash());
     window.addEventListener("hashchange", onHash);
     refreshBoot(); refreshProjects(); refreshChats(); refreshJobs();
+    api.get("/downloads").then((r) => setDownloads(Object.fromEntries(r.downloads.map((d: any) => [d.id, d])))).catch(() => {});
     connectEvents(setConnected);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -68,7 +69,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (e.kind === "model_status") setModelStatus(e);
     if (e.kind === "models_changed" || e.kind === "settings_changed" || e.kind === "harnesses_changed") refreshBoot();
     if (e.kind === "download") {
-      setDownloads((d) => ({ ...d, [e.id]: e }));
+      setDownloads((d) => { const n = { ...d }; if (e.state === "removed") delete n[e.id]; else n[e.id] = e; return n; });
       if (e.state === "done") { toast(`Downloaded ${e.name}`, "ok"); refreshBoot(); }
       if (e.state === "failed") toast(`Download failed: ${e.error}`, "error");
     }

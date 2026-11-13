@@ -84,7 +84,8 @@ def create_app(data_dir=None, resources_dir=None, token=None):
                 "models_dir": str(a.paths.models_dir({"models_dir": a.db.setting("models_dir")})),
                 "secrets_backend": a.secrets.backend, "secrets_secure": a.secrets.secure,
                 "models": a.models.installed(), "default_model": a.models.default_model(),
-                "runtime": {"installed": list(a.runtime.backends()), "status": a.runtime.status, "tag": a.runtime.tag},
+                "runtime": {"installed": list(a.runtime.backends()), "status": a.runtime.status, "tag": a.runtime.tag,
+                            "loaded": a.runtime.loaded()},
                 "harnesses": [{k: h.get(k) for k in ("id", "name", "description", "type", "mode", "enabled", "source", "error")}
                               for h in a.harnesses.all()],
                 "has_hf_token": a.secrets.has("hf_token")}
@@ -139,7 +140,7 @@ def create_app(data_dir=None, resources_dir=None, token=None):
     @api.post("/api/runtime/install")
     async def runtime_install(request: Request):
         backend = (await body(request))["backend"]
-        asyncio.create_task(A().runtime.install_backend(backend))
+        A().spawn(A().runtime.install_backend(backend))
         return {"ok": True}
 
     @api.delete("/api/runtime/{backend}")
@@ -148,8 +149,9 @@ def create_app(data_dir=None, resources_dir=None, token=None):
         return {"ok": True}
 
     @api.post("/api/runtime/unload")
-    async def runtime_unload():
-        await A().runtime.unload()
+    async def runtime_unload(request: Request):
+        data = await body(request) if request.headers.get("content-length") not in (None, "0") else {}
+        await A().runtime.unload((data or {}).get("model_id"))
         return {"ok": True}
 
     @api.get("/api/runtime/log")
@@ -164,7 +166,8 @@ def create_app(data_dir=None, resources_dir=None, token=None):
         for r in rows:
             r["fit"] = a.models.fit(r["size"] or 0, r.get("meta"), (r.get("settings") or {}).get("ctx"), hw)
         return {"models": rows, "default": a.models.default_model(), "status": a.runtime.status,
-                "downloads": list(a.models.downloads.values())}
+                "loaded": a.runtime.loaded(),
+                "downloads": a.models.list_downloads()}
 
     @api.get("/api/models/catalog")
     async def models_catalog():
@@ -178,21 +181,38 @@ def create_app(data_dir=None, resources_dir=None, token=None):
     async def models_files(repo: str):
         return await A().models.repo_files(repo)
 
+    @api.get("/api/models/browse")
+    async def models_browse(category: str = "all", sort: str = "fit", q: str = "", trusted: bool = True,
+                            vision: bool = False):
+        return await A().models.browse(category, sort, q, trusted, vision)
+
     @api.post("/api/models/download")
     async def models_download(request: Request):
+        """{catalog_key} or {repo, file}; vision (default true) also fetches the vision part when there is one."""
         a, data = A(), await body(request)
+        vision = data.get("vision", True)
         if data.get("catalog_key"):
-            item, group = await a.models.resolve_catalog(data["catalog_key"])
-            return {"id": a.models.start_download(item["repo"], group, item["name"], item["key"])}
+            item, group, listing = await a.models.resolve_catalog(data["catalog_key"], with_listing=True)
+            mmproj = listing.get("mmproj_file") if vision else None
+            return {"id": a.models.start_download(item["repo"], group, item["name"], item["key"], mmproj)}
         listing = await a.models.repo_files(data["repo"])
         group = next((g for g in listing["files"] if g["file"] == data["file"]), None)
         if not group:
             raise ValueError("That file is not in the repository")
-        return {"id": a.models.start_download(data["repo"], group, data.get("name"))}
+        mmproj = listing.get("mmproj_file") if vision else None
+        return {"id": a.models.start_download(data["repo"], group, data.get("name"), None, mmproj)}
+
+    @api.post("/api/models/{model_id}/vision")
+    async def models_add_vision(model_id: str):
+        return await A().models.add_vision(model_id)
 
     @api.get("/api/downloads")
     async def downloads():
-        return {"downloads": list(A().models.downloads.values())}
+        return {"downloads": A().models.list_downloads()}
+
+    @api.post("/api/downloads/{dl_id}/resume")
+    async def resume_download(dl_id: str):
+        return {"id": A().models.resume_download(dl_id)}
 
     @api.delete("/api/downloads/{dl_id}")
     async def cancel_download(dl_id: str):
@@ -202,7 +222,7 @@ def create_app(data_dir=None, resources_dir=None, token=None):
     @api.post("/api/models/import")
     async def models_import(request: Request):
         data = await body(request)
-        return await asyncio.to_thread(A().models.import_file, data["path"], data.get("name"))
+        return await asyncio.to_thread(A().models.import_file, data["path"], data.get("name"), data.get("mmproj"))
 
     @api.get("/api/models/local")
     async def models_local():
@@ -259,7 +279,7 @@ def create_app(data_dir=None, resources_dir=None, token=None):
         if not row:
             raise KeyError(pid)
         row["chats"] = a.db.all("SELECT id, title, updated, origin FROM chats WHERE project_id=? AND archived=0 "
-                                "ORDER BY updated DESC", (pid,))
+                                "AND parent_chat_id IS NULL ORDER BY updated DESC", (pid,))
         row["memories"] = a.memory.list("project", pid)
         return row
 
@@ -289,7 +309,8 @@ def create_app(data_dir=None, resources_dir=None, token=None):
     @api.get("/api/chats")
     async def chats(project_id: str = "", q: str = "", limit: int = 200):
         a = A()
-        sql = "SELECT id, project_id, title, model, harness, origin, pinned, updated FROM chats WHERE archived=0"
+        sql = ("SELECT id, project_id, title, model, harness, origin, pinned, updated FROM chats WHERE archived=0 "
+               "AND parent_chat_id IS NULL")
         params = []
         if project_id == "none":
             sql += " AND project_id IS NULL"
@@ -326,8 +347,18 @@ def create_app(data_dir=None, resources_dir=None, token=None):
         chat["pending_approvals"] = [{"approval_id": k, **{x: v[x] for x in ("tool", "description")}}
                                      for k, v in a.approvals.items() if v["chat_id"] == chat_id]
         chat["auto_approve"] = bool(a.db.setting(f"chat_auto_approve:{chat_id}", False))
+        chat["pending_approvals"] += [{"approval_id": k, "agent": v.get("agent"), "agent_chat_id": v["chat_id"],
+                                       **{x: v[x] for x in ("tool", "description")}}
+                                      for k, v in a.approvals.items() if v.get("parent_chat_id") == chat_id]
         chat["memories"] = a.memory.list("chat", chat_id)
         chat["workspace"] = str(a.paths.workspace(chat_id))
+        chat["agents"] = a.db.all("SELECT id, title, agent_name, model, harness, updated FROM chats "
+                                  "WHERE parent_chat_id=? ORDER BY created", (chat_id,))
+        for ag in chat["agents"]:
+            ag["running"] = bool(a.jobs.running_for_chat(ag["id"]))
+        if chat.get("parent_chat_id"):
+            parent = a.db.get("chats", chat["parent_chat_id"])
+            chat["parent"] = {"id": parent["id"], "title": parent["title"]} if parent else None
         return chat
 
     @api.put("/api/chats/{chat_id}")
@@ -337,6 +368,9 @@ def create_app(data_dir=None, resources_dir=None, token=None):
             a.db.set_setting(f"chat_auto_approve:{chat_id}", bool(data.pop("auto_approve")))
         allowed = {k: v for k, v in data.items() if k in ("title", "model", "harness", "connectors", "folders",
                                                          "thinking", "project_id", "pinned", "archived")}
+        if "settings" in data:
+            from .app_state import clean_limits
+            allowed["settings"] = clean_limits(data["settings"])
         for k in ("thinking", "pinned", "archived"):
             if k in allowed:
                 allowed[k] = int(bool(allowed[k]))
@@ -351,6 +385,8 @@ def create_app(data_dir=None, resources_dir=None, token=None):
         jid = a.jobs.running_for_chat(chat_id)
         if jid:
             a.jobs.cancel(jid)
+        for child in a.db.all("SELECT id FROM chats WHERE parent_chat_id=?", (chat_id,)):
+            await chat_delete(child["id"])
         a.db.run("DELETE FROM messages WHERE chat_id=?", (chat_id,))
         a.db.run("DELETE FROM memories WHERE scope='chat' AND scope_id=?", (chat_id,))
         a.db.delete("chats", chat_id)
@@ -359,12 +395,34 @@ def create_app(data_dir=None, resources_dir=None, token=None):
 
     @api.post("/api/chats/{chat_id}/messages")
     async def chat_send(chat_id: str, request: Request):
-        data = await body(request)
+        """mode: 'queue' (default) or 'steer' when the chat is busy. team: [{name, harness, model, task, limits}]
+        to have a team of agents work on this message in parallel."""
+        a, data = A(), await body(request)
         text = (data.get("text") or "").strip()
         if not text and not data.get("attachments"):
             raise ValueError("Type a message")
-        job = A().start_turn(chat_id, text, data.get("attachments") or [])
-        return {"job_id": job["id"]}
+        team = [t for t in (data.get("team") or []) if isinstance(t, dict)][:int(a.db.setting("max_parallel_agents", 4)) * 2]
+        if team:
+            if a.jobs.running_for_chat(chat_id):
+                raise ValueError("Wait for the current reply before starting a team")
+            job = a.start_turn(chat_id, text, data.get("attachments") or [], payload={"team": team})
+            return {"job_id": job["id"], "state": "started"}
+        return a.post_message(chat_id, text, data.get("attachments") or [], data.get("mode") or "queue")
+
+    @api.post("/api/chats/{chat_id}/messages/{message_id}/resend")
+    async def chat_resend(chat_id: str, message_id: str):
+        return A().resend(chat_id, message_id)
+
+    @api.delete("/api/chats/{chat_id}/messages/{message_id}")
+    async def chat_message_delete(chat_id: str, message_id: str):
+        a = A()
+        row = a.db.get("messages", message_id)
+        if not row or row["chat_id"] != chat_id or row["role"] != "user" or \
+                not ((row.get("meta") or {}).get("pending") or (row.get("meta") or {}).get("not_sent")):
+            raise ValueError("Only queued or unsent messages can be removed")
+        a.db.delete("messages", message_id)
+        a.bus.publish("chat", chat_id=chat_id, type="message_deleted", message_id=message_id)
+        return {"ok": True}
 
     @api.post("/api/chats/{chat_id}/retry")
     async def chat_retry(chat_id: str):

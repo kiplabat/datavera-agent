@@ -58,7 +58,8 @@ def read_metadata(path):
             if key == "general.architecture":
                 arch = value
     out = {"gguf_version": version, "architecture": arch, "name": meta.get("general.name"),
-           "file_type": meta.get("general.file_type"), "size_label": meta.get("general.size_label")}
+           "file_type": meta.get("general.file_type"), "size_label": meta.get("general.size_label"),
+           "basename": meta.get("general.basename")}
     if arch:
         for suffix in WANTED_SUFFIXES:
             if f"{arch}.{suffix}" in meta:

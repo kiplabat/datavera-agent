@@ -1,4 +1,4 @@
-"""Tools the agent can use. Built-in groups: files, web, python, memory, skills, automation. Connector (MCP)
+"""Tools the agent can use. Built-in groups: files, web, python, memory, skills, automation, vision, agents. Connector (MCP)
 tools are added per chat. Every tool says whether it changes anything; changes ask the user first unless the
 chat or scheduled task was set to approve automatically."""
 import json
@@ -80,8 +80,8 @@ class ToolContext:
 
 
 def builtin_tools():
-    from . import files, meta, python_exec, web
-    return files.TOOLS + web.TOOLS + python_exec.TOOLS + meta.TOOLS
+    from . import files, meta, python_exec, vision, web
+    return files.TOOLS + web.TOOLS + python_exec.TOOLS + meta.TOOLS + vision.TOOLS
 
 
 GROUPS = {
@@ -91,4 +91,6 @@ GROUPS = {
     "memory": "Remember and recall facts",
     "skills": "Load skills and create new ones",
     "automation": "Create scheduled tasks and harnesses",
+    "vision": "Look at images and videos (vision models only)",
+    "agents": "Hand parts of a task to other agents that work in parallel",
 }

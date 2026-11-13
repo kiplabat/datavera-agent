@@ -72,4 +72,6 @@ signing certificate is added (`win.certificateFile` / Azure Trusted Signing in `
 
 - macOS build (the code paths exist; never run on a Mac).
 - Code signing and auto-update.
-- Vision models (images in chat) — llama.cpp supports them with an `mmproj` file; the UI does not yet.
+- Vision is tested with stand-in models only; real image quality depends on the model (Qwen3.5 and Gemma 3 have
+  vision parts; most others do not). Videos are read as 3–8 sampled frames, not continuous video.
+- Agents on the same model take turns unless that model's "Simultaneous replies" is raised (needs more memory).

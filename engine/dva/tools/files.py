@@ -24,7 +24,27 @@ def _read_text(path, offset=0, limit=400):
             xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
         return re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", "\n"))
     if suffix == ".pdf":
-        raise ToolError("PDF text extraction is not built in; use run_python with a PDF library if installed.")
+        from .web import pdf_to_text
+        text, pages = pdf_to_text(path.read_bytes(), max_pages=80)
+        lines = text.splitlines()
+        chunk = lines[offset:offset + max(limit, 400)]
+        body = "\n".join(chunk)[:TEXT_LIMIT]
+        more = len(lines) - offset - len(chunk)
+        head = f"PDF, {pages} pages.\n"
+        if not text.replace("--- page", "").strip(" -0123456789\n"):
+            head += "(No text layer: this is a scanned PDF. A vision model can read page images instead.)\n"
+        return head + body + (f"\n…{more} more lines (use offset={offset + len(chunk)})" if more > 0 else "")
+    if suffix in (".pptx",):
+        import re
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            slides = sorted((n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)),
+                            key=lambda n: int(re.findall(r"\d+", n)[-1]))
+            out = []
+            for i, n in enumerate(slides, 1):
+                xml = z.read(n).decode("utf-8", errors="ignore")
+                out.append(f"--- slide {i} ---\n" + " ".join(re.findall(r"<a:t>([^<]*)</a:t>", xml)))
+        return "\n".join(out)[:TEXT_LIMIT]
     raw = path.read_bytes()
     if b"\x00" in raw[:4096]:
         raise ToolError(f"{path.name} looks like a binary file ({len(raw)} bytes)")
@@ -154,7 +174,7 @@ S = lambda props, req: {"type": "object", "properties": props, "required": req} 
 PATH = {"type": "string", "description": "File or folder path, relative to the chat's main folder or absolute"}
 
 TOOLS = [
-    Tool("read_file", "Read a text file (also .xlsx sheets and .docx text). Lines are numbered.",
+    Tool("read_file", "Read a file as text: text/code/CSV (numbered lines), .xlsx sheets, .docx, .pptx and .pdf.",
          S({"path": PATH, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["path"]),
          read_file, "files", label="Read file", summary=lambda a: f"Read {a.get('path')}"),
     Tool("list_files", "List files in a folder. Use pattern like '*.csv' and recursive=true to search deeper.",

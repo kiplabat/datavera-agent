@@ -8,15 +8,21 @@ import { startAgentChat } from "./Skills";
 const GROUPS = [
   ["files", "Files in the chat's folders"], ["web", "Web search & pages"], ["python", "Run Python"],
   ["memory", "Memory"], ["skills", "Skills"], ["automation", "Schedules & harnesses"],
+  ["vision", "Look at images & videos (vision models)"], ["agents", "Start helper agents in parallel"],
 ];
-const MODES: any = { chat: "Chat — no tools, fastest", agent: "Agent — tools, step by step", planner: "Planner — plan first, then steps" };
+const MODES: any = { chat: "Chat — no tools, fastest", agent: "Agent — tools, step by step", planner: "Planner — plan first, then steps",
+  research: "Research — fixed stages: search, read, download, cited report (cannot loop)", team: "Team — splits the work between agents in parallel" };
 
 function Editor({ h, onSaved, onCancel }: any) {
   const { toast } = useApp();
   const [s, setS] = useState<any>({ name: h?.name || "", description: h?.description || "", type: "loop", mode: h?.mode || "agent",
     tools: h?.tools || ["files", "web", "memory", "skills"], max_steps: h?.max_steps || 10, temperature: h?.temperature ?? 0.3,
     thinking: !!h?.thinking, connectors: h?.connectors ?? true, memory: h?.memory ?? true, learn: h?.learn ?? true,
-    plan_max_steps: h?.plan_max_steps || 5, tool_mode: h?.tool_mode || "native" });
+    plan_max_steps: h?.plan_max_steps || 5, tool_mode: h?.tool_mode || "native",
+    ...(h?.max_searches ? { max_searches: h.max_searches } : {}), ...(h?.time_limit_minutes ? { time_limit_minutes: h.time_limit_minutes } : {}),
+    ...(h?.max_reply_tokens ? { max_reply_tokens: h.max_reply_tokens } : {}), ...(h?.queries ? { queries: h.queries } : {}),
+    ...(h?.pages ? { pages: h.pages } : {}), ...(h?.max_downloads !== undefined ? { max_downloads: h.max_downloads } : {}) });
+  const num = (k: string, v: string) => { const n = { ...s }; if (v === "") delete n[k]; else n[k] = Number(v); setS(n); };
   const [prompt, setPrompt] = useState(h?.system_prompt || "");
   const save = async () => {
     try {
@@ -32,13 +38,20 @@ function Editor({ h, onSaved, onCancel }: any) {
       <Field label="How it works">
         <select className="input" value={s.mode} onChange={(e) => setS({ ...s, mode: e.target.value })}>{Object.entries(MODES).map(([k, v]: any) => <option key={k} value={k}>{v}</option>)}</select>
       </Field>
-      {s.mode !== "chat" && <>
+      {s.mode === "research" && <div className="row gap-m wrap">
+        <Field label="Searches"><input className="input narrow" type="number" min={1} max={8} placeholder="4" value={s.queries ?? ""} onChange={(e) => num("queries", e.target.value)} /></Field>
+        <Field label="Pages to read"><input className="input narrow" type="number" min={1} max={15} placeholder="6" value={s.pages ?? ""} onChange={(e) => num("pages", e.target.value)} /></Field>
+        <Field label="Files to download"><input className="input narrow" type="number" min={0} max={20} placeholder="6" value={s.max_downloads ?? ""} onChange={(e) => num("max_downloads", e.target.value)} /></Field>
+      </div>}
+      {!["chat", "research", "team"].includes(s.mode) && <>
         <Field label="Tools">{GROUPS.map(([k, label]) => (
           <label key={k} className="check"><input type="checkbox" checked={s.tools.includes(k)} onChange={(e) => setS({ ...s, tools: e.target.checked ? [...s.tools, k] : s.tools.filter((x: string) => x !== k) })} /> {label}</label>
         ))}<Toggle checked={s.connectors} onChange={(v: boolean) => setS({ ...s, connectors: v })} label="Can use the chat's connectors" /></Field>
         <div className="row gap-m wrap">
           <Field label="Step limit"><input className="input narrow" type="number" min={1} max={60} value={s.max_steps} onChange={(e) => setS({ ...s, max_steps: Number(e.target.value) })} /></Field>
           {s.mode === "planner" && <Field label="Max plan steps"><input className="input narrow" type="number" min={1} max={12} value={s.plan_max_steps} onChange={(e) => setS({ ...s, plan_max_steps: Number(e.target.value) })} /></Field>}
+          <Field label="Web searches per reply" help="Stops search loops."><input className="input narrow" type="number" min={1} max={30} placeholder="6" value={s.max_searches ?? ""} onChange={(e) => num("max_searches", e.target.value)} /></Field>
+          <Field label="Time limit (min)"><input className="input narrow" type="number" min={1} placeholder="30" value={s.time_limit_minutes ?? ""} onChange={(e) => num("time_limit_minutes", e.target.value)} /></Field>
           <Field label="Tool calling" help="JSON mode helps small models that fumble native tool calls.">
             <select className="input" value={s.tool_mode} onChange={(e) => setS({ ...s, tool_mode: e.target.value })}><option value="native">Native</option><option value="json">JSON (small models)</option></select>
           </Field>

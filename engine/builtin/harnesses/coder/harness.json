@@ -1,0 +1,21 @@
+{
+  "name": "Coder",
+  "description": "Reads, writes and fixes code in your folders, runs it and its tests, and explains the changes.",
+  "type": "loop",
+  "mode": "agent",
+  "tools": [
+    "files",
+    "python",
+    "web",
+    "memory",
+    "skills"
+  ],
+  "connectors": true,
+  "max_steps": 24,
+  "max_searches": 4,
+  "max_reply_tokens": 4096,
+  "temperature": 0.2,
+  "memory": true,
+  "learn": true,
+  "icon": "code"
+}
