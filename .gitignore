@@ -1,0 +1,10 @@
+.env
+.venv/
+outputs/
+inventory/
+agent_state/
+agent_config.json
+backup_*/
+retired_*/
+__pycache__/
+*.pyc
