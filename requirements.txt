@@ -1,0 +1,10 @@
+# v3 agent: no LangChain/LangGraph needed (the old packages may stay installed; they are unused).
+fastmcp
+httpx
+python-dotenv
+pandas
+matplotlib
+filelock
+jsonschema
+# Optional: read XLSX sources
+openpyxl
